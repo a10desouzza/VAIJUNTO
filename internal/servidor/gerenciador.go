@@ -1,3 +1,15 @@
+/* ================================================================================================
+ * internal/servidor/gerenciador.go - VaiJunto: sistema de caronas compartilhadas
+ * Autor: Arthur Souza
+ *
+ * Estado central em RAM: usuarios, sessoes, caronas e reservas.
+ * Os metodos publicos controlam as travas; os auxiliares dependem da trava de quem os chamou.
+ *
+ * DIVISAO DE RESPONSABILIDADES:
+ * O servidor mantem o estado em RAM e valida as operacoes. As estruturas compartilhadas sao
+ * protegidas por travas.
+ * ================================================================================================ */
+
 package servidor
 
 import (
@@ -31,11 +43,15 @@ type oferta struct {
 	ids       []string
 }
 
+/* Guarda os dados comparaveis e o ID gerado para reconhecer uma operacao repetida. */
 type repeticao struct {
 	assinatura string
 	id         string
 }
 
+/* GrafoItinerarios: unico estado central. rotas liga cidade de origem aos IDs dos trechos;
+ * trechos guarda as arestas por ID; ocupados liga trecho e numero de assento a reserva.
+ * agora e uma funcao para os testes controlarem o horario sem esperar a viagem iniciar. */
 type GrafoItinerarios struct {
 	agora        func() time.Time
 	notificacoes map[string][]protocolo.Notificacao
@@ -51,6 +67,14 @@ type GrafoItinerarios struct {
 	sequencia    uint64
 }
 
+/* NovoGrafo
+ *
+ * Recebe: Nao recebe parametros.
+ *
+ * O que faz: inicializa os mapas e o relogio. Retorna um servidor sem dados cadastrados.
+ *
+ * Retorna: Ponteiro para GrafoItinerarios com mapas vazios e relogio time.Now.
+ */
 func NovoGrafo() *GrafoItinerarios {
 	return &GrafoItinerarios{
 		agora: time.Now, notificacoes: make(map[string][]protocolo.Notificacao),
@@ -61,11 +85,28 @@ func NovoGrafo() *GrafoItinerarios {
 	}
 }
 
+/* novoID
+ *
+ * Recebe: prefixo: letra que identifica o recurso, como C, T ou R; g: estado central.
+ *
+ * O que faz: gera um ID com prefixo e contador. Exige que quem chamou mantenha a trava de escrita.
+ *
+ * Retorna: String com o prefixo e a sequencia incrementada. Exige trava de escrita.
+ */
 func (g *GrafoItinerarios) novoID(prefixo string) string {
 	g.sequencia++
 	return fmt.Sprintf("%s%06d", prefixo, g.sequencia)
 }
 
+/* Cadastrar
+ *
+ * Recebe: c: nome, e-mail, senha e perfil informados no cadastro; g: estado central.
+ *
+ * O que faz: valida o cadastro e retorna o usuario ou erro. Armazena salt e hash da senha.
+ *
+ * Retorna: Usuario sem senha quando aceita; estrutura vazia e error quando os dados ou o e-mail
+ * forem invalidos.
+ */
 func (g *GrafoItinerarios) Cadastrar(c protocolo.Cadastro) (protocolo.Usuario, error) {
 	c.Email = strings.ToLower(strings.TrimSpace(c.Email))
 	c.Nome = strings.TrimSpace(c.Nome)
@@ -77,6 +118,8 @@ func (g *GrafoItinerarios) Cadastrar(c protocolo.Cadastro) (protocolo.Usuario, e
 	if c.Perfil != protocolo.Motorista && c.Perfil != protocolo.Passageiro {
 		return protocolo.Usuario{}, fmt.Errorf("perfil deve ser MOTORISTA ou PASSAGEIRO")
 	}
+	/* Salt aleatorio por conta: senhas iguais nao precisam produzir o mesmo hash armazenado.
+	 * Esse calculo ocorre antes da trava de escrita para nao bloquear os mapas durante o PBKDF2. */
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return protocolo.Usuario{}, err
@@ -95,6 +138,15 @@ func (g *GrafoItinerarios) Cadastrar(c protocolo.Cadastro) (protocolo.Usuario, e
 	return u, nil
 }
 
+/* Autenticar
+ *
+ * Recebe: c: e-mail e senha; g: contas e sessoes do servidor.
+ *
+ * O que faz: confere as credenciais e retorna um token aleatorio com validade de duas horas.
+ *
+ * Retorna: Sessao com usuario, token e validade; estrutura vazia e error se as credenciais forem
+ * recusadas.
+ */
 func (g *GrafoItinerarios) Autenticar(c protocolo.Credenciais) (protocolo.Sessao, error) {
 	email := strings.ToLower(strings.TrimSpace(c.Email))
 	if len(c.Senha) > 128 {
@@ -128,6 +180,15 @@ func (g *GrafoItinerarios) Autenticar(c protocolo.Credenciais) (protocolo.Sessao
 	return protocolo.Sessao{Token: token, ExpiraEm: expira.Format(time.RFC3339), Usuario: usuario.usuario}, nil
 }
 
+/* autorizar
+ *
+ * Recebe: token: identificador da sessao; perfil: papel exigido, ou vazio para qualquer perfil; g:
+ * estado protegido.
+ *
+ * O que faz: confere token, validade e perfil. IMPORTANTE: quem chama ja deve manter Lock ou RLock.
+ *
+ * Retorna: Usuario da sessao ou error se o token expirou, nao existe ou nao permite a operacao.
+ */
 func (g *GrafoItinerarios) autorizar(token, perfil string) (protocolo.Usuario, error) {
 	s, ok := g.sessoes[token]
 	if !ok || !s.expira.After(g.agora()) {
@@ -140,6 +201,14 @@ func (g *GrafoItinerarios) autorizar(token, perfil string) (protocolo.Usuario, e
 	return u, nil
 }
 
+/* Desconectar
+ *
+ * Recebe: token: sessao que sera encerrada; g: estado central.
+ *
+ * O que faz: remove a sessao do token. Nao apaga a conta nem cancela suas reservas.
+ *
+ * Retorna: nil ao remover a sessao; error quando a sessao nao e valida.
+ */
 func (g *GrafoItinerarios) Desconectar(token string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()

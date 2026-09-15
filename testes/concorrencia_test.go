@@ -1,3 +1,15 @@
+/* ================================================================================================
+ * testes/concorrencia_test.go - VaiJunto: sistema de caronas compartilhadas
+ * Autor: Arthur Souza
+ *
+ * Testes de autenticacao, grafo e integridade das reservas.
+ * Cada cenario cria seu proprio estado para evitar dependencia entre testes.
+ *
+ * DIVISAO DE RESPONSABILIDADES:
+ * Este arquivo prepara cenarios e verifica resultados. As regras exercitadas permanecem nos
+ * pacotes da aplicacao.
+ * ================================================================================================ */
+
 package testes
 
 import (
@@ -18,6 +30,15 @@ type ambiente struct {
 	outroPassageiro string
 }
 
+/* usuario
+ *
+ * Recebe: t: controle do teste; g: estado central; email e perfil: dados da conta.
+ *
+ * O que faz: Cadastra uma conta de teste e autentica para que os cenarios possam chamar operacoes
+ * protegidas.
+ *
+ * Retorna: Token autenticado. Interrompe o teste com Fatal se nao conseguir preparar a conta.
+ */
 func usuario(t testing.TB, g *servidor.GrafoItinerarios, email, perfil string) string {
 	t.Helper()
 	if _, err := g.Cadastrar(protocolo.Cadastro{Nome: "Pessoa Teste", Email: email, Senha: "senha-teste-123", Perfil: perfil}); err != nil {
@@ -30,12 +51,29 @@ func usuario(t testing.TB, g *servidor.GrafoItinerarios, email, perfil string) s
 	return s.Token
 }
 
+/* preparar
+ *
+ * Recebe: t: controle do teste.
+ *
+ * O que faz: Isola os dados de cada teste e prepara contas com perfis diferentes.
+ *
+ * Retorna: Ambiente com grafo novo e tokens de dois motoristas e dois passageiros.
+ */
 func preparar(t testing.TB) ambiente {
 	t.Helper()
 	g := servidor.NovoGrafo()
 	return ambiente{g: g, motorista: usuario(t, g, "m@teste.com", protocolo.Motorista), outroMotorista: usuario(t, g, "m2@teste.com", protocolo.Motorista), passageiro: usuario(t, g, "p@teste.com", protocolo.Passageiro), outroPassageiro: usuario(t, g, "p2@teste.com", protocolo.Passageiro)}
 }
 
+/* oferta
+ *
+ * Recebe: chave: identificador da operacao; rota: cidades; hora: partida RFC3339; vagas:
+ * capacidade.
+ *
+ * O que faz: Monta dados padrao de distancia e tempos para reutilizar nos cenarios.
+ *
+ * Retorna: PublicacaoCarona com uma oferta por par de cidades consecutivas.
+ */
 func oferta(chave string, rota []string, hora string, vagas int) protocolo.PublicacaoCarona {
 	trechos := make([]protocolo.OfertaTrecho, len(rota)-1)
 	for i := range trechos {
@@ -44,6 +82,15 @@ func oferta(chave string, rota []string, hora string, vagas int) protocolo.Publi
 	return protocolo.PublicacaoCarona{ValorKM: 1, Chave: chave, Rota: rota, DataHora: hora, Assentos: vagas, Trechos: trechos}
 }
 
+/* publicar
+ *
+ * Recebe: t: controle do teste; a: ambiente; token: motorista; chave, rota, hora e vagas: dados da
+ * oferta.
+ *
+ * O que faz: Usa a funcao oferta e publica no estado central do cenario.
+ *
+ * Retorna: Carona publicada. Interrompe o teste com Fatal se a preparacao falhar.
+ */
 func publicar(t testing.TB, a ambiente, token, chave string, rota []string, hora string, vagas int) protocolo.Carona {
 	t.Helper()
 	c, err := a.g.Publicar(token, oferta(chave, rota, hora, vagas))
@@ -53,6 +100,14 @@ func publicar(t testing.TB, a ambiente, token, chave string, rota []string, hora
 	return c
 }
 
+/* ids
+ *
+ * Recebe: c: carona retornada pelo servidor.
+ *
+ * O que faz: Extrai os IDs para montar uma requisicao de reserva.
+ *
+ * Retorna: Lista com IDs de seus trechos na mesma ordem.
+ */
 func ids(c protocolo.Carona) []string {
 	r := make([]string, len(c.Trechos))
 	for i, t := range c.Trechos {
@@ -61,6 +116,15 @@ func ids(c protocolo.Carona) []string {
 	return r
 }
 
+/* TestAutenticacaoEAutorizacao
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Verifica senha incorreta, perfil inadequado, token invalido e revogacao da sessao.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestAutenticacaoEAutorizacao(t *testing.T) {
 	a := preparar(t)
 	if _, err := a.g.Autenticar(protocolo.Credenciais{Email: "p@teste.com", Senha: "errada"}); err == nil {
@@ -83,6 +147,16 @@ func TestAutenticacaoEAutorizacao(t *testing.T) {
 	}
 }
 
+/* TestMultigrafoDataConexoesEOrdenacao
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Verifica ofertas paralelas, filtro por data, compatibilidade das conexoes e ordenacao
+ * dos itinerarios.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestMultigrafoDataConexoesEOrdenacao(t *testing.T) {
 	a := preparar(t)
 	publicar(t, a, a.motorista, "ab", []string{"A", "B"}, "2099-10-01T08:00:00-03:00", 2)
@@ -114,6 +188,16 @@ func TestMultigrafoDataConexoesEOrdenacao(t *testing.T) {
 	}
 }
 
+/* TestConcorrenciaUltimoAssento
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Disputa a ultima vaga com goroutines e confere que apenas uma reserva completa foi
+ * confirmada.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestConcorrenciaUltimoAssento(t *testing.T) {
 	a := preparar(t)
 	c := publicar(t, a, a.motorista, "abc", []string{"A", "B", "C"}, "2099-10-01T08:00:00-03:00", 1)
@@ -150,6 +234,16 @@ func TestConcorrenciaUltimoAssento(t *testing.T) {
 	}
 }
 
+/* TestAtomicidadeEAssentoPorTrecho
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Confere que uma falha em um trecho nao ocupa os demais e que a disponibilidade e
+ * controlada por trecho.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestAtomicidadeEAssentoPorTrecho(t *testing.T) {
 	a := preparar(t)
 	c := publicar(t, a, a.motorista, "abc", []string{"A", "B", "C"}, "2099-10-01T08:00:00-03:00", 1)
@@ -170,6 +264,16 @@ func TestAtomicidadeEAssentoPorTrecho(t *testing.T) {
 	}
 }
 
+/* TestIdempotenciaECancelamento
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Repete publicacoes, confirmacoes e cancelamentos para verificar que nao duplicam
+ * recursos nem vagas.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestIdempotenciaECancelamento(t *testing.T) {
 	a := preparar(t)
 	c := publicar(t, a, a.motorista, "abc", []string{"A", "B", "C"}, "2099-10-01T08:00:00-03:00", 2)
@@ -214,6 +318,16 @@ func TestIdempotenciaECancelamento(t *testing.T) {
 	}
 }
 
+/* TestCancelamentoCaronaReverteItinerarioInteiro
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Cancela uma oferta usada em uma reserva e confere o cancelamento integral e a
+ * devolucao das vagas.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestCancelamentoCaronaReverteItinerarioInteiro(t *testing.T) {
 	a := preparar(t)
 	ab := publicar(t, a, a.motorista, "ab", []string{"A", "B"}, "2099-10-01T08:00:00-03:00", 1)
@@ -241,6 +355,15 @@ func TestCancelamentoCaronaReverteItinerarioInteiro(t *testing.T) {
 	}
 }
 
+/* TestRoteadorRejeitaMensagensInvalidas
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Envia mensagens malformadas ou incompativeis e verifica respostas de erro do roteador.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestRoteadorRejeitaMensagensInvalidas(t *testing.T) {
 	g := servidor.NovoGrafo()
 	for _, msg := range []string{`{`, `null`, `[]`, `{}`, `{"acao":"X","dados":{}}`, `{"acao":"CADASTRAR","dados":null}`, `{"acao":"AUTENTICAR","dados":{"email":"x","extra":1}}`, `{"acao":"AUTENTICAR","acao":"CADASTRAR","dados":{}}`, `{"acao":"CADASTRAR","dados":{"email":"a","email":"b"}}`, `{"acao":"DESCONECTAR","dados":{}}`} {
@@ -255,6 +378,15 @@ func TestRoteadorRejeitaMensagensInvalidas(t *testing.T) {
 	}
 }
 
+/* TestPublicacaoInvalidaNaoCriaTrechos
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Tenta publicar dados invalidos e verifica que nao foram criados trechos parciais.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestPublicacaoInvalidaNaoCriaTrechos(t *testing.T) {
 	a := preparar(t)
 	for _, alterar := range []func(*protocolo.PublicacaoCarona){
@@ -277,6 +409,16 @@ func TestPublicacaoInvalidaNaoCriaTrechos(t *testing.T) {
 	}
 }
 
+/* TestCopiasNaoExpoemEstado
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Altera dados devolvidos nas respostas e verifica que as copias nao permitem modificar
+ * o estado central.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestCopiasNaoExpoemEstado(t *testing.T) {
 	a := preparar(t)
 	c := publicar(t, a, a.motorista, "ab", []string{"A", "B"}, "2099-10-01T08:00:00-03:00", 2)

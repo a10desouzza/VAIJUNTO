@@ -1,3 +1,15 @@
+/* ================================================================================================
+ * internal/servidor/regras_test.go - VaiJunto: sistema de caronas compartilhadas
+ * Autor: Arthur Souza
+ *
+ * Testes de horario, preco, cancelamento e notificacoes.
+ * O relogio do cenario permite simular o inicio do percurso sem esperar o tempo real.
+ *
+ * DIVISAO DE RESPONSABILIDADES:
+ * Este arquivo prepara cenarios e verifica resultados. As regras exercitadas permanecem nos
+ * pacotes da aplicacao.
+ * ================================================================================================ */
+
 package servidor
 
 import (
@@ -21,6 +33,15 @@ type cenarioViagem struct {
 	bc    protocolo.Carona
 }
 
+/* criarCenario
+ *
+ * Recebe: t: controle do teste.
+ *
+ * O que faz: Cria um grafo novo e injeta um relogio ajustavel. Publica A-B com um motorista e
+ * B-C-D com outro.
+ *
+ * Retorna: Ponteiro para cenarioViagem com relogio, contas e caronas preparadas.
+ */
 func criarCenario(t *testing.T) *cenarioViagem {
 	t.Helper()
 	c := &cenarioViagem{g: NovoGrafo(), agora: time.Date(2099, 10, 1, 8, 0, 0, 0, time.FixedZone("Bahia", -3*3600))}
@@ -57,6 +78,14 @@ func criarCenario(t *testing.T) *cenarioViagem {
 	return c
 }
 
+/* reservar
+ *
+ * Recebe: t: controle do teste; c: cenario com os dois motoristas e o passageiro.
+ *
+ * O que faz: Confirma o percurso formado pelo primeiro trecho de cada uma das duas caronas.
+ *
+ * Retorna: Reserva de A-B-C. Interrompe o teste com Fatal se a confirmacao falhar.
+ */
 func (c *cenarioViagem) reservar(t *testing.T) protocolo.Reserva {
 	t.Helper()
 	r, err := c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "abc", TrechosIDs: []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID}})
@@ -66,6 +95,16 @@ func (c *cenarioViagem) reservar(t *testing.T) protocolo.Reserva {
 	return r
 }
 
+/* TestNaoCancelaConexaoDeItinerarioIniciado
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Avanca o relogio ate o inicio de A-B e tenta cancelar a conexao do outro motorista.
+ * Confere que vagas, reserva e avisos nao mudaram.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestNaoCancelaConexaoDeItinerarioIniciado(t *testing.T) {
 	for _, tipo := range []string{"trecho", "carona"} {
 		for _, minutos := range []int{30, 31} {
@@ -98,6 +137,16 @@ func TestNaoCancelaConexaoDeItinerarioIniciado(t *testing.T) {
 	}
 }
 
+/* TestCancelamentoAntesDaPartidaENotificacoes
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Cancela antes da partida, repete a operacao e confere devolucao unica de vagas,
+ * status parcial e propriedade das notificacoes.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestCancelamentoAntesDaPartidaENotificacoes(t *testing.T) {
 	c := criarCenario(t)
 	r := c.reservar(t)
@@ -145,6 +194,16 @@ func TestCancelamentoAntesDaPartidaENotificacoes(t *testing.T) {
 	}
 }
 
+/* TestCaronaIniciadaBloqueiaCancelamentoEReserva
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Simula carona iniciada e verifica a recusa de cancelamento e nova reserva, inclusive
+ * em um trecho posterior.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestCaronaIniciadaBloqueiaCancelamentoEReserva(t *testing.T) {
 	c := criarCenario(t)
 	c.agora = c.agora.Add(50 * time.Minute)
@@ -164,6 +223,16 @@ func TestCaronaIniciadaBloqueiaCancelamentoEReserva(t *testing.T) {
 	}
 }
 
+/* TestItinerarioIniciadoNaoBloqueiaTrechoSemRelacao
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Cancela um trecho que nao pertence ao itinerario iniciado e verifica que a reserva
+ * independente permanece ativa.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestItinerarioIniciadoNaoBloqueiaTrechoSemRelacao(t *testing.T) {
 	c := criarCenario(t)
 	r := c.reservar(t)
@@ -176,6 +245,16 @@ func TestItinerarioIniciadoNaoBloqueiaTrechoSemRelacao(t *testing.T) {
 	}
 }
 
+/* TestPrecoKMEMesmaRota
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Confere o arredondamento do preco, IDs diferentes para ofertas distintas e repeticao
+ * sem duplicar a publicacao.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestPrecoKMEMesmaRota(t *testing.T) {
 	c := criarCenario(t)
 	p := protocolo.PublicacaoCarona{Chave: "nova", Rota: []string{"A", "B"}, DataHora: c.ab.DataHora, ValorKM: 1.25, Assentos: 2, Trechos: []protocolo.OfertaTrecho{{DistanciaKM: 10.25, TempoViagem: 10}}}
@@ -204,6 +283,16 @@ func TestPrecoKMEMesmaRota(t *testing.T) {
 	}
 }
 
+/* TestCancelamentoEConfirmacaoConcorrentes
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Dispara confirmacoes e cancelamentos simultaneos. Ao final confere vagas devolvidas e
+ * ausencia de reserva ativa no trecho cancelado.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestCancelamentoEConfirmacaoConcorrentes(t *testing.T) {
 	c := criarCenario(t)
 	inicio := make(chan struct{})
@@ -234,6 +323,16 @@ func TestCancelamentoEConfirmacaoConcorrentes(t *testing.T) {
 	}
 }
 
+/* TestNovasAcoesTCPProtocoladas
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Monta envelopes JSON de cancelamento e consulta de avisos e os entrega ao roteador.
+ * Confere respostas e estado, sem abrir um socket neste teste.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestNovasAcoesTCPProtocoladas(t *testing.T) {
 	c := criarCenario(t)
 	r := c.reservar(t)

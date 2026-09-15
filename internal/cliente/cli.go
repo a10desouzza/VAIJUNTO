@@ -1,3 +1,14 @@
+/* ================================================================================================
+ * internal/cliente/cli.go - VaiJunto: sistema de caronas compartilhadas
+ * Autor: Arthur Souza
+ *
+ * Execucao por flags ou menu interativo. Arquivos JSON sao uma alternativa aos formularios.
+ *
+ * DIVISAO DE RESPONSABILIDADES:
+ * O cliente coleta entradas e exibe respostas; o servidor decide permissoes, disponibilidade e
+ * alteracoes nas reservas.
+ * ================================================================================================ */
+
 package cliente
 
 import (
@@ -6,13 +17,22 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"vaijunto/internal/configuracao"
 	"vaijunto/internal/protocolo"
 )
 
+/* Executar
+ *
+ * Recebe: perfil: MOTORISTA ou PASSAGEIRO. Tambem le flags e variaveis de ambiente do processo.
+ *
+ * O que faz: recebe o perfil, interpreta as flags e abre o menu ou envia uma operacao isolada.
+ *
+ * Retorna: nil ao concluir; error de argumentos, arquivo, rede, resposta ou operacao recusada.
+ */
 func Executar(perfil string) error {
 	padrao := os.Getenv("VAIJUNTO_SERVIDOR")
 	if padrao == "" {
-		padrao = "127.0.0.1:8080"
+		padrao = configuracao.ServidorPadrao
 	}
 	endereco := flag.String("servidor", padrao, "IP:porta do servidor TCP")
 	acao := flag.String("acao", "", "CADASTRAR, AUTENTICAR, DESCONECTAR ou operação do perfil")

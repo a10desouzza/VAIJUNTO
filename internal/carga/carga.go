@@ -1,3 +1,15 @@
+/* ================================================================================================
+ * internal/carga/carga.go - VaiJunto: sistema de caronas compartilhadas
+ * Autor: Arthur Souza
+ *
+ * Teste de carga por sockets reais. Prepara usuarios, dispara reservas concorrentes
+ * e confere a integridade dos dois trechos de motoristas diferentes.
+ *
+ * DIVISAO DE RESPONSABILIDADES:
+ * A carga simula usuarios pela rede e mede resultados; as vagas continuam sendo controladas pelo
+ * servidor central.
+ * ================================================================================================ */
+
 package carga
 
 import (
@@ -26,6 +38,15 @@ type Metricas struct {
 	Integridade        bool    `json:"integridade"`
 }
 
+/* chamar
+ *
+ * Recebe: endereco: servidor TCP; acao: operacao; token: sessao; dados: objeto do pedido;
+ * alvo: ponteiro para os dados da resposta, ou nil para ignorar esses dados.
+ *
+ * O que faz: envia a operacao TCP e converte os dados para alvo. Propaga falhas como erro.
+ *
+ * Retorna: nil na resposta de sucesso; error na serializacao, transporte, recusa ou conversao.
+ */
 func chamar(endereco, acao, token string, dados any, alvo any) error {
 	raw, err := json.Marshal(dados)
 	if err != nil {
@@ -48,6 +69,15 @@ func chamar(endereco, acao, token string, dados any, alvo any) error {
 	return json.Unmarshal(raw, alvo)
 }
 
+/* criarUsuario
+ *
+ * Recebe: endereco: servidor; email: identificador da conta de teste; perfil: MOTORISTA ou
+ * PASSAGEIRO.
+ *
+ * O que faz: cadastra e autentica uma conta de teste, retornando seu token.
+ *
+ * Retorna: Token da sessao e nil, ou error se o cadastro/login falhar.
+ */
 func criarUsuario(endereco, email, perfil string) (string, error) {
 	senha := "senha-carga-" + email
 	if err := chamar(endereco, protocolo.AcaoCadastrar, "", protocolo.Cadastro{Nome: "Teste de carga", Email: email, Senha: senha, Perfil: perfil}, nil); err != nil {
@@ -58,6 +88,17 @@ func criarUsuario(endereco, email, perfil string) (string, error) {
 	return sessao.Token, err
 }
 
+/* Executar
+ *
+ * Recebe: endereco: servidor TCP; quantidade: de 1 a 200 clientes; vagas: de 1 a 100 por trecho.
+ *
+ * O que faz: Cadastra dois motoristas, publica dois trechos conectados e autentica os passageiros.
+ * Libera as goroutines por um canal, mede as confirmacoes e verifica vagas e assentos unicos.
+ * Ao concluir a fase de uso, tenta cancelar as ofertas e encerrar as sessoes dos passageiros.
+ *
+ * Retorna: Metricas e nil se a integridade e o transporte passarem; metricas parciais e error na
+ * falha.
+ */
 func Executar(endereco string, quantidade, vagas int) (Metricas, error) {
 	m := Metricas{Clientes: quantidade, VagasPorTrecho: vagas}
 	if quantidade < 1 || quantidade > 200 || vagas < 1 || vagas > 100 {
@@ -112,6 +153,7 @@ func Executar(endereco string, quantidade, vagas int) (Metricas, error) {
 		duracao  time.Duration
 	}
 	resultados := make([]resultado, quantidade)
+	/* Barreira de inicio: todas as goroutines esperam o fechamento do mesmo canal. */
 	inicio := make(chan struct{})
 	var wg sync.WaitGroup
 	for i, token := range tokens {
@@ -119,8 +161,10 @@ func Executar(endereco string, quantidade, vagas int) (Metricas, error) {
 		go func() {
 			defer wg.Done()
 			<-inicio
+			/* A medicao comeca apos preparar usuarios e ofertas; cobre a disputa pelas reservas. */
 			instante := time.Now()
 			resposta, err := cliente.EnviarRequisicao(endereco, protocolo.Requisicao{Acao: protocolo.AcaoConfirmar, Token: token, Dados: pedido})
+			/* Cada goroutine escreve em seu indice; a leitura so ocorre depois do Wait. */
 			resultados[i] = resultado{resposta: resposta, err: err, duracao: time.Since(instante)}
 		}()
 	}
@@ -159,6 +203,7 @@ func Executar(endereco string, quantidade, vagas int) (Metricas, error) {
 			}
 		}
 	}
+	/* P95: valor que cobre pelo menos 95% das latencias medidas, apos ordenacao. */
 	sort.Float64s(latencias)
 	m.LatenciaP95MS = latencias[int(math.Ceil(float64(quantidade)*0.95))-1]
 	m.DuracaoMS = float64(duracao) / float64(time.Millisecond)

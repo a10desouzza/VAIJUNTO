@@ -1,3 +1,14 @@
+/* ================================================================================================
+ * internal/cliente/menu_test.go - VaiJunto: sistema de caronas compartilhadas
+ * Autor: Arthur Souza
+ *
+ * Testes dos menus com entrada simulada e servidor TCP local.
+ *
+ * DIVISAO DE RESPONSABILIDADES:
+ * Este arquivo prepara cenarios e verifica resultados. As regras exercitadas permanecem nos
+ * pacotes da aplicacao.
+ * ================================================================================================ */
+
 package cliente_test
 
 import (
@@ -12,6 +23,16 @@ import (
 	"vaijunto/internal/servidor"
 )
 
+/* TestMenusFluxoCompletoTCP
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Simula entradas dos dois perfis em um servidor TCP local e confere cadastro,
+ * publicacao, reserva, cancelamento e avisos.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestMenusFluxoCompletoTCP(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -48,6 +69,15 @@ func TestMenusFluxoCompletoTCP(t *testing.T) {
 	executar(protocolo.Motorista, "1\nana@menu.test\nsenha1234\n2\n3\n1\n1\n2\n0\n", "3/3 vagas", "Carona cancelada", "CANCELADA")
 }
 
+/* TestMenuEntradaInvalidaEEncerramento
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Simula EOF e opcoes invalidas e verifica o encerramento do menu sem falha.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestMenuEntradaInvalidaEEncerramento(t *testing.T) {
 	for _, entrada := range []string{"", "abc\n9\n0\n", "2\nNome\n"} {
 		var saida bytes.Buffer

@@ -1,3 +1,15 @@
+/* ================================================================================================
+ * internal/cliente/menu.go - VaiJunto: sistema de caronas compartilhadas
+ * Autor: Arthur Souza
+ *
+ * Interface dos dois perfis. Le formularios, monta requisicoes e apresenta respostas.
+ * As regras finais de disponibilidade e permissao ficam no servidor.
+ *
+ * DIVISAO DE RESPONSABILIDADES:
+ * O cliente coleta entradas e exibe respostas; o servidor decide permissoes, disponibilidade e
+ * alteracoes nas reservas.
+ * ================================================================================================ */
+
 package cliente
 
 import (
@@ -27,6 +39,18 @@ type menu struct {
 	nome string
 }
 
+/* ExecutarMenu
+ *
+ * Recebe: endereco: servidor TCP; perfil: papel do cliente; entrada: leitor das respostas
+ * digitadas;
+ * saida: destino dos textos apresentados. Cria m para guardar a sessao e o estado do menu.
+ *
+ * O que faz: mantem o fluxo de login e operacoes. Entrada e saida sao parametros para permitir
+ * testes.
+ *
+ * Retorna: nil ao sair normalmente ou atingir EOF; error de leitura quando nao houver encerramento
+ * normal.
+ */
 func ExecutarMenu(endereco, perfil string, entrada io.Reader, saida io.Writer) error {
 	m := &menu{leitor: bufio.NewScanner(entrada), saida: saida, endereco: endereco, perfil: perfil}
 	m.cabecalho("VaiJunto", "")
@@ -127,6 +151,16 @@ func ExecutarMenu(endereco, perfil string, entrada io.Reader, saida io.Writer) e
 	return m.err
 }
 
+/* texto
+ *
+ * Recebe: rotulo: nome do campo; m: leitor, saida e estado do formulario.
+ *
+ * O que faz: le uma linha preenchida. Registra EOF ou /voltar em m.err para interromper o
+ * formulario.
+ *
+ * Retorna: Texto preenchido e sem espacos nas pontas; string vazia se houver interrupcao,
+ * registrada em m.err.
+ */
 func (m *menu) texto(rotulo string) string {
 	for m.err == nil {
 		fmt.Fprintf(m.saida, "%s: ", rotulo)
@@ -154,6 +188,15 @@ func (m *menu) texto(rotulo string) string {
 	return ""
 }
 
+/* numero
+ *
+ * Recebe: rotulo: nome do campo; minimo e maximo: intervalo permitido; m: estado do formulario.
+ *
+ * O que faz: repete a leitura ate receber um inteiro no intervalo ou interromper o formulario.
+ *
+ * Retorna: Inteiro validado; zero na interrupcao. Consulte m.err para distinguir zero valido de
+ * interrupcao.
+ */
 func (m *menu) numero(rotulo string, minimo, maximo int) int {
 	for m.err == nil {
 		s := m.texto(rotulo)
@@ -169,10 +212,26 @@ func (m *menu) numero(rotulo string, minimo, maximo int) int {
 	return 0
 }
 
+/* preco
+ *
+ * Recebe: Nenhum argumento explicito; usa m para entrada e saida.
+ *
+ * O que faz: atalho para leitura de um valor em reais usando a validacao decimal.
+ *
+ * Retorna: Valor em reais entre zero e um milhao; zero na interrupcao, indicada por m.err.
+ */
 func (m *menu) preco() float64 {
 	return m.decimal("Preço em reais (ex.: 25,50)", 0, 1000000)
 }
 
+/* decimal
+ *
+ * Recebe: rotulo: nome do campo; minimo e maximo: limites numericos; m: estado do formulario.
+ *
+ * O que faz: aceita ponto ou virgula e ate duas casas decimais dentro dos limites.
+ *
+ * Retorna: float64 validado ou zero quando interrompido; a interrupcao fica em m.err.
+ */
 func (m *menu) decimal(rotulo string, minimo, maximo float64) float64 {
 	for m.err == nil {
 		s := strings.ReplaceAll(m.texto(rotulo), ",", ".")
@@ -188,6 +247,14 @@ func (m *menu) decimal(rotulo string, minimo, maximo float64) float64 {
 	return 0
 }
 
+/* data
+ *
+ * Recebe: Nenhum argumento explicito; usa m para ler a data.
+ *
+ * O que faz: aceita data brasileira ou ISO e retorna AAAA-MM-DD para o protocolo.
+ *
+ * Retorna: Data normalizada em AAAA-MM-DD; string vazia quando interrompida, com m.err preenchido.
+ */
 func (m *menu) data() string {
 	for m.err == nil {
 		s := m.texto("Data (DD/MM/AAAA ou AAAA-MM-DD)")
@@ -204,7 +271,22 @@ func (m *menu) data() string {
 	return ""
 }
 
+/* enviar
+ *
+ * Recebe: acao: operacao solicitada; dados: objeto a serializar; alvo: ponteiro para receber os
+ * dados da resposta,
+ * ou nil quando nao precisa deles; m: endereco, token e estado do formulario.
+ *
+ * O que faz: Monta o envelope uma vez e preserva os dados nas tentativas. Em falha de transporte
+ * permite
+ * ao usuario reenviar o mesmo pedido, preservando a chave de publicacao/reserva.
+ * Invalida o token local ao receber erro de sessao expirada e converte os dados para alvo.
+ *
+ * Retorna: nil no sucesso, preenchendo alvo se fornecido; error de formulario, transporte ou
+ * recusa do servidor.
+ */
 func (m *menu) enviar(acao string, dados, alvo any) error {
+	/* /voltar e EOF interrompem antes de qualquer envio deste formulario. */
 	if m.err != nil {
 		return m.err
 	}
@@ -212,6 +294,7 @@ func (m *menu) enviar(acao string, dados, alvo any) error {
 	if err != nil {
 		return err
 	}
+	/* Montamos uma vez, fora das tentativas: o reenvio preserva dados e chave da operacao. */
 	req := protocolo.Requisicao{Acao: acao, Token: m.token, Dados: raw}
 	for {
 		resp, err := EnviarRequisicao(m.endereco, req)
@@ -240,6 +323,15 @@ func (m *menu) enviar(acao string, dados, alvo any) error {
 	}
 }
 
+/* cadastrar
+ *
+ * Recebe: Nenhum argumento explicito; usa m para ler nome, e-mail, senha e perfil.
+ *
+ * O que faz: le os dados, confirma a senha e envia o cadastro com o perfil deste cliente.
+ *
+ * Retorna: nil apos cadastrar ou error de formulario, rede ou recusa. O login e feito
+ * separadamente.
+ */
 func (m *menu) cadastrar() error {
 	m.cabecalho("Cadastro", "")
 	p := protocolo.Cadastro{Nome: m.campo("Nome", func(s string) string { return strings.Join(strings.Fields(s), " ") }, protocolo.ValidarNome), Email: m.email(), Perfil: m.perfil}
@@ -258,6 +350,16 @@ func (m *menu) cadastrar() error {
 	return nil
 }
 
+/* entrar
+ *
+ * Recebe: Nenhum argumento explicito; usa m para ler credenciais e guardar a sessao.
+ *
+ * O que faz: autentica e guarda o token localmente. Recusa uma conta de perfil diferente do
+ * cliente aberto.
+ *
+ * Retorna: nil com token e nome armazenados em m; error se o login falhar ou o perfil for
+ * diferente.
+ */
 func (m *menu) entrar() error {
 	m.cabecalho("Login", "")
 	p := protocolo.Credenciais{Email: m.email(), Senha: m.campo("Senha (visível no terminal)", nil, protocolo.ValidarSenha)}
@@ -275,6 +377,16 @@ func (m *menu) entrar() error {
 	return nil
 }
 
+/* novaChave
+ *
+ * Recebe: Nao recebe parametros.
+ *
+ * O que faz: gera 16 bytes aleatorios em hexadecimal para identificar uma nova publicacao ou
+ * confirmacao.
+ *
+ * Retorna: String hexadecimal com 16 bytes aleatorios e nil; string vazia e error se a geracao
+ * falhar.
+ */
 func novaChave() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -283,6 +395,15 @@ func novaChave() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+/* publicar
+ *
+ * Recebe: Nenhum argumento explicito; usa m para ler rota, partida, vagas, valor/km, distancias e
+ * tempos.
+ *
+ * O que faz: monta rota e trechos, mostra o resumo e envia apos a confirmacao do motorista.
+ *
+ * Retorna: nil ao publicar ou desistir na confirmacao; error de entrada, geracao da chave ou envio.
+ */
 func (m *menu) publicar() error {
 	m.cabecalho("Publicar carona", "")
 	n := m.numero("Quantidade de cidades da rota", 2, 21)
@@ -336,6 +457,14 @@ func (m *menu) publicar() error {
 	return nil
 }
 
+/* caronas
+ *
+ * Recebe: Nenhum argumento explicito; usa m.token e m.endereco.
+ *
+ * O que faz: consulta e mostra vagas e passageiros por trecho. Retorna a lista para selecao.
+ *
+ * Retorna: Lista de caronas exibidas e nil, ou nil e error se a consulta falhar.
+ */
 func (m *menu) caronas() ([]protocolo.Carona, error) {
 	m.cabecalho("Minhas caronas", "")
 	var caronas []protocolo.Carona
@@ -358,6 +487,14 @@ func (m *menu) caronas() ([]protocolo.Carona, error) {
 	return caronas, nil
 }
 
+/* cancelarCarona
+ *
+ * Recebe: Nenhum argumento explicito; usa m para consultar e selecionar a carona.
+ *
+ * O que faz: seleciona uma oferta e pede confirmacao antes de solicitar o cancelamento.
+ *
+ * Retorna: nil ao cancelar ou voltar; error de consulta ou cancelamento.
+ */
 func (m *menu) cancelarCarona() error {
 	caronas, err := m.caronas()
 	if err != nil || len(caronas) == 0 {
@@ -383,6 +520,15 @@ func (m *menu) cancelarCarona() error {
 	return nil
 }
 
+/* buscar
+ *
+ * Recebe: Nenhum argumento explicito; usa m para receber filtros e selecionar um itinerario.
+ *
+ * O que faz: consulta itinerarios e permite reservar uma opcao enviando os IDs na ordem do
+ * percurso.
+ *
+ * Retorna: nil ao reservar, voltar ou nao encontrar opcoes; error de entrada, chave ou requisicao.
+ */
 func (m *menu) buscar() error {
 	m.cabecalho("Buscar itinerário", "")
 	b := protocolo.BuscaItinerario{Origem: m.cidade("Origem", nil)}
@@ -437,6 +583,15 @@ func (m *menu) buscar() error {
 	return nil
 }
 
+/* mostrarReserva
+ *
+ * Recebe: r: reserva que sera exibida; m: destino de saida.
+ *
+ * O que faz: mostra status, valor e percurso. Nao apresenta uma escolha de assento numerado.
+ *
+ * Retorna: Nao retorna valor. Mostra ID, status, preco, percurso e motivo de cancelamento quando
+ * existir.
+ */
 func (m *menu) mostrarReserva(r protocolo.Reserva) {
 	fmt.Fprintf(m.saida, "  %s | %s | %s\n", r.ID, r.Status, dinheiro(r.PrecoTotal))
 	for _, a := range r.Assentos {
@@ -447,6 +602,15 @@ func (m *menu) mostrarReserva(r protocolo.Reserva) {
 	}
 }
 
+/* reservas
+ *
+ * Recebe: Nenhum argumento explicito; usa m.token e m.endereco.
+ *
+ * O que faz: consulta e apresenta as reservas do passageiro. Retorna a lista para as outras
+ * operacoes.
+ *
+ * Retorna: Lista de reservas exibidas e nil; nil e error se a consulta falhar.
+ */
 func (m *menu) reservas() ([]protocolo.Reserva, error) {
 	m.cabecalho("Minhas reservas", "")
 	var reservas []protocolo.Reserva
@@ -463,6 +627,14 @@ func (m *menu) reservas() ([]protocolo.Reserva, error) {
 	return reservas, nil
 }
 
+/* cancelarReserva
+ *
+ * Recebe: Nenhum argumento explicito; usa m para consultar e selecionar uma reserva.
+ *
+ * O que faz: seleciona a reserva e confirma o cancelamento de todos os seus trechos.
+ *
+ * Retorna: nil ao cancelar ou voltar; error de consulta ou cancelamento.
+ */
 func (m *menu) cancelarReserva() error {
 	reservas, err := m.reservas()
 	if err != nil || len(reservas) == 0 {

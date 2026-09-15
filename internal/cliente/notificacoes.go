@@ -1,3 +1,15 @@
+/* ================================================================================================
+ * internal/cliente/notificacoes.go - VaiJunto: sistema de caronas compartilhadas
+ * Autor: Arthur Souza
+ *
+ * Consulta de avisos e formulario de cancelamento de trecho.
+ * Os avisos sao buscados pelo cliente; nao existe envio espontaneo pelo servidor.
+ *
+ * DIVISAO DE RESPONSABILIDADES:
+ * O cliente coleta entradas e exibe respostas; o servidor decide permissoes, disponibilidade e
+ * alteracoes nas reservas.
+ * ================================================================================================ */
+
 package cliente
 
 import (
@@ -6,6 +18,18 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
+/* notificacoes
+ *
+ * Recebe: todas: true inclui lidas; false mostra apenas novas; m: token, endereco e destino de
+ * saida.
+ *
+ * O que faz: Consulta os avisos do usuario, mostra cada aviso selecionado e so depois envia a
+ * confirmacao
+ * de leitura dos novos. Se essa confirmacao falhar, o aviso pode aparecer novamente.
+ *
+ * Retorna: nil ao concluir; error de comunicacao ou operacao. A falha na consulta pode limpar o
+ * token local.
+ */
 func (m *menu) notificacoes(todas bool) error {
 	resp, err := EnviarRequisicao(m.endereco, protocolo.Requisicao{Acao: protocolo.AcaoNotificacoes, Token: m.token, Dados: json.RawMessage(`{}`)})
 	if err != nil {
@@ -31,6 +55,7 @@ func (m *menu) notificacoes(todas bool) error {
 			continue
 		}
 		fmt.Fprintf(m.saida, "\nAviso da reserva %s (%s):\n%s\n", aviso.ReservaID, horarioLegivel(aviso.CriadaEm), aviso.Mensagem)
+		/* Confirma a leitura somente depois de mostrar o aviso no terminal. */
 		if !aviso.Lida {
 			raw, _ := json.Marshal(protocolo.Identificador{ID: aviso.ID})
 			confirmacao, err := EnviarRequisicao(m.endereco, protocolo.Requisicao{Acao: protocolo.AcaoLerNotificacao, Token: m.token, Dados: raw})
@@ -45,6 +70,14 @@ func (m *menu) notificacoes(todas bool) error {
 	return nil
 }
 
+/* cancelarTrecho
+ *
+ * Recebe: Nenhum argumento explicito; usa m para consultar caronas e selecionar o trecho.
+ *
+ * O que faz: consulta caronas, seleciona um trecho e confirma a solicitacao de cancelamento.
+ *
+ * Retorna: nil ao cancelar, voltar ou encontrar trecho ja cancelado; error de consulta ou envio.
+ */
 func (m *menu) cancelarTrecho() error {
 	caronas, err := m.caronas()
 	if err != nil || len(caronas) == 0 {

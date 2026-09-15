@@ -1,3 +1,14 @@
+/* ================================================================================================
+ * cmd/servidor/main_test.go - VaiJunto: sistema de caronas compartilhadas
+ * Autor: Arthur Souza
+ *
+ * Testes do transporte: JSON fragmentado, varias linhas, timeout e limite de mensagem.
+ *
+ * DIVISAO DE RESPONSABILIDADES:
+ * Este arquivo prepara cenarios e verifica resultados. As regras exercitadas permanecem nos
+ * pacotes da aplicacao.
+ * ================================================================================================ */
+
 package main
 
 import (
@@ -12,6 +23,16 @@ import (
 	"vaijunto/internal/servidor"
 )
 
+/* TestSocketNDJSON
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Envia um cadastro fragmentado e outra linha invalida na mesma conexao. Confere uma
+ * resposta por mensagem.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestSocketNDJSON(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -53,6 +74,16 @@ func TestSocketNDJSON(t *testing.T) {
 	}
 }
 
+/* TestTimeoutETamanho
+ *
+ * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
+ *
+ * O que faz: Simula conexao ociosa, mensagem grande demais e linha incompleta, verificando o
+ * encerramento do atendimento.
+ *
+ * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
+ * verificacoes.
+ */
 func TestTimeoutETamanho(t *testing.T) {
 	for _, caso := range []string{"ocioso", "excesso", "incompleta"} {
 		t.Run(caso, func(t *testing.T) {

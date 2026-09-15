@@ -51,6 +51,7 @@ As vagas são controladas por trecho. O passageiro não escolhe um número de as
 | `cmd/carga` | Programa para simular vários clientes concorrentes |
 | `internal/servidor` | Grafo, reservas, autenticação, roteamento e atendimento TCP |
 | `internal/cliente` | Menus, entrada de dados e comunicação dos clientes |
+| `internal/configuracao/rede.go` | IP padrão dos clientes e endereço de escuta do servidor |
 | `internal/protocolo` | Estruturas das mensagens, validações e documentação do protocolo |
 | `internal/carga` | Execução e medição do teste de carga |
 | `testes` | Testes de integração, concorrência e falhas |
@@ -78,6 +79,8 @@ go version
 Baixe e extraia o projeto ou clone seu repositório. Abra a pasta que contém `go.mod` e `compose.yaml`. Todos os comandos deste manual devem ser executados nessa pasta. No VS Code, utilize **Arquivo > Abrir Pasta** e **Terminal > Novo Terminal**.
 
 ### 1. Iniciar o servidor
+
+Os clientes e o teste de carga executados com Go apontam por padrão para **192.168.1.5:8080**, o IP Ethernet da máquina usada nesta configuração. Se outra máquina for hospedar o servidor, ajuste o endereço conforme a seção abaixo antes de abrir os clientes.
 
 No primeiro terminal:
 
@@ -142,6 +145,29 @@ Para reservar, informe origem, destino, data e critério de ordenação. Escolha
 - Os avisos são consultados ao retornar ao menu do passageiro ou pela opção **Verificar notificações**. Não há envio espontâneo do servidor ao cliente.
 
 Para encerrar, escolha **0 - Sair** nos clientes e pressione `Ctrl+C` no terminal do servidor.
+
+### Onde alterar o IP do servidor
+
+Abra [internal/configuracao/rede.go](internal/configuracao/rede.go) e altere a constante:
+
+```go
+const ServidorPadrao = "192.168.1.5:8080"
+```
+
+Substitua `192.168.1.5` pelo IPv4 do computador que executará o servidor. No Windows, descubra o endereço com `ipconfig`; no Linux, com `hostname -I`. Se os clientes e o servidor forem executados somente no mesmo computador, também pode usar `127.0.0.1:8080`.
+
+A constante `EscutaPadrao = ":8080"` permite ao servidor receber conexões em todas as interfaces. Ela não precisa receber o IP de cada computador. Quando o IP da rede mudar, atualize o destino dos clientes.
+
+Sem editar arquivos, também é possível informar o destino ao abrir cada cliente:
+
+```bash
+go run ./cmd/cliente_motorista -servidor 192.168.1.5:8080
+go run ./cmd/cliente_passageiro -servidor 192.168.1.5:8080
+```
+
+Abra esses comandos em terminais separados. A flag `-servidor` tem prioridade sobre `VAIJUNTO_SERVIDOR`, que tem prioridade sobre a constante. No Docker Compose, a variável definida pelo serviço continua usando `servidor:8080` por padrão, permitindo executar o conjunto em outro computador sem editar o código. Para acessar um servidor remoto pelo Docker, defina `VAIJUNTO_SERVIDOR` conforme a seção de acesso por outro computador.
+
+Depois de editar a constante, execute novamente com `go run` ou recompile seus executáveis. Se utiliza a imagem Docker, reconstrua-a para incluir alterações do código.
 
 ### Alterar a porta na execução local
 

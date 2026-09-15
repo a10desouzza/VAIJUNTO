@@ -1,3 +1,14 @@
+/* ================================================================================================
+ * internal/servidor/roteador.go - VaiJunto: sistema de caronas compartilhadas
+ * Autor: Arthur Souza
+ *
+ * Interpretacao do protocolo. Valida o envelope e converte os dados conforme a acao solicitada.
+ *
+ * DIVISAO DE RESPONSABILIDADES:
+ * O servidor mantem o estado em RAM e valida as operacoes. As estruturas compartilhadas sao
+ * protegidas por travas.
+ * ================================================================================================ */
+
 package servidor
 
 import (
@@ -9,6 +20,15 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
+/* verificarJSON
+ *
+ * Recebe: d: decodificador posicionado no valor JSON que sera percorrido.
+ *
+ * O que faz: percorre objetos e listas para rejeitar chaves duplicadas, inclusive nos dados
+ * internos.
+ *
+ * Retorna: nil quando nao encontra erro; error de leitura ou campo duplicado.
+ */
 func verificarJSON(d *json.Decoder) error {
 	token, err := d.Token()
 	if err != nil {
@@ -48,6 +68,16 @@ func verificarJSON(d *json.Decoder) error {
 	return err
 }
 
+/* decodificar
+ *
+ * Recebe: dados: bytes do objeto JSON; alvo: ponteiro para a estrutura que recebera os campos.
+ *
+ * O que faz: exige um unico objeto JSON UTF-8, rejeita campos desconhecidos e preenche alvo ou
+ * retorna erro.
+ *
+ * Retorna: nil com alvo preenchido, ou error de formato, UTF-8, duplicidade ou campos
+ * desconhecidos.
+ */
 func decodificar(dados []byte, alvo any) error {
 	dados = bytes.TrimSpace(dados)
 	if len(dados) == 0 || dados[0] != '{' || !utf8.Valid(dados) || !json.Valid(dados) {
@@ -67,6 +97,14 @@ func decodificar(dados []byte, alvo any) error {
 	return nil
 }
 
+/* ProcessarMensagem
+ *
+ * Recebe: mensagem: bytes de uma linha sem o delimitador final; g: estado central.
+ *
+ * O que faz: transforma o resultado da operacao em uma resposta padrao de SUCESSO ou ERRO.
+ *
+ * Retorna: Bytes da resposta JSON terminada por quebra de linha, com status SUCESSO ou ERRO.
+ */
 func ProcessarMensagem(mensagem []byte, g *GrafoItinerarios) []byte {
 	dados, err := processar(mensagem, g)
 	if err != nil {
@@ -75,6 +113,15 @@ func ProcessarMensagem(mensagem []byte, g *GrafoItinerarios) []byte {
 	return codificarResposta(protocolo.Resposta{Status: protocolo.Sucesso, Mensagem: "Operação concluída.", Dados: dados})
 }
 
+/* processar
+ *
+ * Recebe: mensagem: envelope JSON; g: gerenciador usado para executar a acao.
+ *
+ * O que faz: le o envelope e chama a funcao da acao. Cada operacao possui seu proprio tipo de
+ * dados.
+ *
+ * Retorna: Dados da operacao como any e nil no sucesso, ou error que sera convertido em resposta.
+ */
 func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 	if len(mensagem) >= protocolo.LimiteMensagem {
 		return nil, fmt.Errorf("mensagem excede o limite de 1 MiB")
@@ -148,6 +195,14 @@ func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 	}
 }
 
+/* codificarResposta
+ *
+ * Recebe: r: envelope de resposta com status, mensagem e dados opcionais.
+ *
+ * O que faz: serializa a resposta e acrescenta a quebra de linha exigida pelo protocolo.
+ *
+ * Retorna: Linha JSON em bytes; se a serializacao falhar, devolve uma resposta fixa de erro.
+ */
 func codificarResposta(r protocolo.Resposta) []byte {
 	dados, err := json.Marshal(r)
 	if err != nil {
