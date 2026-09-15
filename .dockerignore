@@ -1,0 +1,8 @@
+.git
+.codex
+.agents
+*.exe
+*.test
+*.out
+README.md
+exemplos

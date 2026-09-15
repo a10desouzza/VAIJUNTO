@@ -1,0 +1,42 @@
+name: vaijunto
+services:
+  servidor:
+    image: vaijunto:local
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "${VAIJUNTO_PORTA:-8080}:8080"
+    command: ["-endereco", ":8080", "-timeout", "30s"]
+  motorista:
+    image: vaijunto:local
+    build:
+      context: .
+      target: runtime
+    profiles: ["clientes"]
+    entrypoint: ["/bin/cliente_motorista"]
+    environment:
+      VAIJUNTO_SERVIDOR: "${VAIJUNTO_SERVIDOR:-servidor:8080}"
+      VAIJUNTO_TOKEN: "${VAIJUNTO_TOKEN:-}"
+    stdin_open: true
+  passageiro:
+    image: vaijunto:local
+    build:
+      context: .
+      target: runtime
+    profiles: ["clientes"]
+    entrypoint: ["/bin/cliente_passageiro"]
+    environment:
+      VAIJUNTO_SERVIDOR: "${VAIJUNTO_SERVIDOR:-servidor:8080}"
+      VAIJUNTO_TOKEN: "${VAIJUNTO_TOKEN:-}"
+    stdin_open: true
+  carga:
+    image: vaijunto:local
+    build:
+      context: .
+      target: runtime
+    profiles: ["testes"]
+    entrypoint: ["/bin/carga"]
+    environment:
+      VAIJUNTO_SERVIDOR: "${VAIJUNTO_SERVIDOR:-servidor:8080}"
+    command: ["-clientes", "100", "-vagas", "5"]
