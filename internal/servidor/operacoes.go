@@ -94,16 +94,16 @@ func (g *GrafoItinerarios) validarCancelamento(ids []string, agora time.Time) er
 
 /* ConsultarNotificacoes
  *
- * Recebe: token: sessao do usuario; g: avisos guardados no servidor.
+ * Recebe: sessaoID: sessao do usuario; g: avisos guardados no servidor.
  *
  * O que faz: retorna uma copia dos avisos do usuario, incluindo os ja lidos.
  *
  * Retorna: Copia da lista de notificacoes, incluindo lidas, ou error de autorizacao.
  */
-func (g *GrafoItinerarios) ConsultarNotificacoes(token string) ([]protocolo.Notificacao, error) {
+func (g *GrafoItinerarios) ConsultarNotificacoes(sessaoID string) ([]protocolo.Notificacao, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	u, err := g.autorizar(token, "")
+	u, err := g.autorizar(sessaoID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -112,16 +112,16 @@ func (g *GrafoItinerarios) ConsultarNotificacoes(token string) ([]protocolo.Noti
 
 /* LerNotificacao
  *
- * Recebe: token: sessao do usuario; id: aviso a marcar como lido; g: estado central.
+ * Recebe: sessaoID: sessao do usuario; id: aviso a marcar como lido; g: estado central.
  *
  * O que faz: marca um aviso do proprio usuario como lido. Retorna erro se o ID nao lhe pertencer.
  *
  * Retorna: nil se o aviso do usuario foi marcado; error de sessao ou aviso nao encontrado.
  */
-func (g *GrafoItinerarios) LerNotificacao(token, id string) error {
+func (g *GrafoItinerarios) LerNotificacao(sessaoID, id string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	u, err := g.autorizar(token, "")
+	u, err := g.autorizar(sessaoID, "")
 	if err != nil {
 		return err
 	}
@@ -150,7 +150,7 @@ func (g *GrafoItinerarios) notificar(r protocolo.Reserva) {
 
 /* CancelarTrecho
  *
- * Recebe: token: sessao do motorista; id: trecho escolhido; g: estado central.
+ * Recebe: sessaoID: sessao do motorista; id: trecho escolhido; g: estado central.
  *
  * O que faz: Protege o estado com Lock e impede cancelar depois do inicio da carona ou de um
  * itinerario
@@ -160,10 +160,10 @@ func (g *GrafoItinerarios) notificar(r protocolo.Reserva) {
  * Retorna: Carona com status e trechos atualizados, ou error de autorizacao, propriedade ou
  * horario.
  */
-func (g *GrafoItinerarios) CancelarTrecho(token, id string) (protocolo.Carona, error) {
+func (g *GrafoItinerarios) CancelarTrecho(sessaoID, id string) (protocolo.Carona, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	u, err := g.autorizar(token, protocolo.Motorista)
+	u, err := g.autorizar(sessaoID, protocolo.Motorista)
 	if err != nil {
 		return protocolo.Carona{}, err
 	}

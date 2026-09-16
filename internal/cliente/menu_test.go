@@ -59,8 +59,8 @@ func TestMenusFluxoCompletoTCP(t *testing.T) {
 			}
 		}
 	}
-	executar(protocolo.Motorista, "2\nAna\nana@menu.test\nsenha1234\nsenha1234\n1\nana@menu.test\nsenha1234\n1\n3\nSalvador\nFeira\nSerrinha\n2099-10-01\n08:00\n3\n1\n45,50\n120\n15\n25\n60\n0\n1\n2\n0\n", "Conta criada", "publicada com sucesso", "3/3 vagas")
-	executar(protocolo.Passageiro, "2\nBia\nbia@menu.test\nsenha1234\nsenha1234\n1\nbia@menu.test\nsenha1234\n1\nSalvador\nSerrinha\n2099-10-01\n1\n1\n1\n2\n0\n", "confirmada!", "R$ 70,50", "1 vaga reservada", "ATIVA")
+	executar(protocolo.Motorista, "2\nAna\nana@menu.test\nsenha1234\nsenha1234\n1\n3\nSalvador\nFeira\nSerrinha\n2099-10-01\n08:00\n3\n1\n45,50\n120\n15\n25\n60\n1\n2\n0\n", "Conta criada. Acesso realizado: Ana", "publicada com sucesso", "3/3 vagas")
+	executar(protocolo.Passageiro, "2\nBia\nbia@menu.test\nsenha1234\nsenha1234\n1\nSalvador\nSerrinha\n2099-10-01\n1\n1\n1\n2\n0\n", "Conta criada. Acesso realizado: Bia", "confirmada!", "R$ 70,50", "1 vaga reservada", "ATIVA")
 	executar(protocolo.Motorista, "1\nana@menu.test\nsenha1234\n2\n0\n", "2/3 vagas", "Bia")
 	executar(protocolo.Passageiro, "1\nbia@menu.test\nsenha1234\n3\n1\n1\n2\n0\n", "Os assentos foram devolvidos", "CANCELADA")
 	executar(protocolo.Passageiro, "1\nbia@menu.test\nsenha1234\n1\nSalvador\nSerrinha\n2099-10-01\n1\n1\n1\n0\n", "confirmada!")

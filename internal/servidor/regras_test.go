@@ -33,6 +33,66 @@ type cenarioViagem struct {
 	bc    protocolo.Carona
 }
 
+func TestPublicacaoSemParadaNoDestinoFinal(t *testing.T) {
+	c := criarCenario(t)
+	for _, n := range []int{2, 3, 8, 21} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			p := protocolo.PublicacaoCarona{Chave: fmt.Sprint("final-", n), ValorKM: 2, Assentos: 2, DataHora: c.agora.Add(time.Hour).Format(time.RFC3339)}
+			for i := 0; i < n; i++ {
+				p.Rota = append(p.Rota, fmt.Sprintf("Cidade %c", 'A'+i))
+				if i < n-1 {
+					p.Trechos = append(p.Trechos, protocolo.OfertaTrecho{DistanciaKM: 10, TempoViagem: 60, TempoParada: 15})
+				}
+			}
+			carona, err := c.g.Publicar(c.m1, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, item := range carona.Trechos {
+				esperada := 15
+				if i == n-2 {
+					esperada = 0
+				}
+				if item.Trecho.TempoParada != esperada {
+					t.Fatalf("trecho %d: parada %d, esperado %d", i, item.Trecho.TempoParada, esperada)
+				}
+				hora := c.agora.Add(time.Hour + time.Duration(i*75)*time.Minute).Format(time.RFC3339)
+				if item.Trecho.DataHora != hora {
+					t.Fatalf("horário: %s, esperado %s", item.Trecho.DataHora, hora)
+				}
+			}
+			if p.Trechos[n-2].TempoParada != 15 {
+				t.Fatal("alterou entrada do chamador")
+			}
+			p.Trechos[n-2].TempoParada = 0
+			repetida, err := c.g.Publicar(c.m1, p)
+			if err != nil || repetida.ID != carona.ID {
+				t.Fatalf("repetição normalizada: %v, %s", err, repetida.ID)
+			}
+		})
+	}
+}
+
+func TestConexaoNaChegadaAoDestinoFinal(t *testing.T) {
+	c := criarCenario(t)
+	// A-B chega às 08:40: a parada de 5 enviada pelo cliente antigo é ignorada.
+	bc, err := c.g.Publicar(c.m2, protocolo.PublicacaoCarona{Chave: "conexao-imediata", Rota: []string{"B", "E"}, DataHora: c.agora.Add(40 * time.Minute).Format(time.RFC3339), Assentos: 1, ValorKM: 1, Trechos: []protocolo.OfertaTrecho{{DistanciaKM: 10, TempoViagem: 10, TempoParada: 100}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	busca, err := c.g.Buscar(c.p, protocolo.BuscaItinerario{Origem: "A", Destino: "E", Data: "2099-10-01"})
+	if err != nil || len(busca.Itinerarios) != 1 {
+		t.Fatalf("busca: %+v; %v", busca, err)
+	}
+	if busca.Itinerarios[0].DuracaoTotal != 20 {
+		t.Fatalf("duração: %d", busca.Itinerarios[0].DuracaoTotal)
+	}
+	_, err = c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "sem-espera-final", TrechosIDs: []string{c.ab.Trechos[0].Trecho.ID, bc.Trechos[0].Trecho.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 /* criarCenario
  *
  * Recebe: t: controle do teste.
@@ -55,19 +115,19 @@ func criarCenario(t *testing.T) *cenarioViagem {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return s.Token
+		return s.ID
 	}
 	c.m1 = usuario("m1@teste.com", protocolo.Motorista)
 	c.m2 = usuario("m2@teste.com", protocolo.Motorista)
 	c.p = usuario("p@teste.com", protocolo.Passageiro)
 	c.outro = usuario("outro@teste.com", protocolo.Passageiro)
-	publicar := func(token, chave string, rota []string, minutos int) protocolo.Carona {
+	publicar := func(sessaoID, chave string, rota []string, minutos int) protocolo.Carona {
 		t.Helper()
 		ofertas := make([]protocolo.OfertaTrecho, len(rota)-1)
 		for i := range ofertas {
 			ofertas[i] = protocolo.OfertaTrecho{DistanciaKM: 10, TempoViagem: 10, TempoParada: 5}
 		}
-		carona, err := c.g.Publicar(token, protocolo.PublicacaoCarona{Chave: chave, Rota: rota, DataHora: c.agora.Add(time.Duration(minutos) * time.Minute).Format(time.RFC3339), ValorKM: 2, Assentos: 2, Trechos: ofertas})
+		carona, err := c.g.Publicar(sessaoID, protocolo.PublicacaoCarona{Chave: chave, Rota: rota, DataHora: c.agora.Add(time.Duration(minutos) * time.Minute).Format(time.RFC3339), ValorKM: 2, Assentos: 2, Trechos: ofertas})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -338,8 +398,8 @@ func TestNovasAcoesTCPProtocoladas(t *testing.T) {
 	r := c.reservar(t)
 	tid, _ := json.Marshal(protocolo.Identificador{ID: c.bc.Trechos[0].Trecho.ID})
 	for _, req := range []protocolo.Requisicao{
-		{Acao: protocolo.AcaoCancelarTrecho, Token: c.m2, Dados: tid},
-		{Acao: protocolo.AcaoNotificacoes, Token: c.p, Dados: json.RawMessage(`{}`)},
+		{Acao: protocolo.AcaoCancelarTrecho, SessaoID: c.m2, Dados: tid},
+		{Acao: protocolo.AcaoNotificacoes, SessaoID: c.p, Dados: json.RawMessage(`{}`)},
 	} {
 		raw, _ := json.Marshal(req)
 		var resp protocolo.Resposta

@@ -37,7 +37,7 @@ func TestRespostaPerdidaPodeSerRecuperada(t *testing.T) {
 	c := publicar(t, a, a.motorista, "ab", []string{"A", "B"}, "2099-10-01T08:00:00-03:00", 1)
 	pedido := protocolo.ReservaItinerario{Chave: "resposta-perdida", TrechosIDs: ids(c)}
 	dados, _ := json.Marshal(pedido)
-	mensagem, _ := json.Marshal(protocolo.Requisicao{Acao: protocolo.AcaoConfirmar, Token: a.passageiro, Dados: dados})
+	mensagem, _ := json.Marshal(protocolo.Requisicao{Acao: protocolo.AcaoConfirmar, SessaoID: a.passageiro, Dados: dados})
 	servidorConn, clienteConn := net.Pipe()
 	fim := make(chan struct{})
 	go func() { defer close(fim); servidor.AtenderConexao(servidorConn, a.g, time.Second) }()

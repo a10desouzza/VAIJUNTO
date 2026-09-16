@@ -142,9 +142,9 @@ func (g *GrafoItinerarios) Cadastrar(c protocolo.Cadastro) (protocolo.Usuario, e
  *
  * Recebe: c: e-mail e senha; g: contas e sessoes do servidor.
  *
- * O que faz: confere as credenciais e retorna um token aleatorio com validade de duas horas.
+ * O que faz: confere as credenciais e retorna uma sessao aleatoria com validade de duas horas.
  *
- * Retorna: Sessao com usuario, token e validade; estrutura vazia e error se as credenciais forem
+ * Retorna: Sessao com usuario, identificador e validade; estrutura vazia e error se as credenciais forem
  * recusadas.
  */
 func (g *GrafoItinerarios) Autenticar(c protocolo.Credenciais) (protocolo.Sessao, error) {
@@ -166,7 +166,7 @@ func (g *GrafoItinerarios) Autenticar(c protocolo.Credenciais) (protocolo.Sessao
 	if _, err := rand.Read(aleatorio); err != nil {
 		return protocolo.Sessao{}, err
 	}
-	token := hex.EncodeToString(aleatorio)
+	sessaoID := hex.EncodeToString(aleatorio)
 	agora := g.agora()
 	expira := agora.Add(2 * time.Hour)
 	g.mu.Lock()
@@ -176,21 +176,21 @@ func (g *GrafoItinerarios) Autenticar(c protocolo.Credenciais) (protocolo.Sessao
 			delete(g.sessoes, chave)
 		}
 	}
-	g.sessoes[token] = sessao{email: email, expira: expira}
-	return protocolo.Sessao{Token: token, ExpiraEm: expira.Format(time.RFC3339), Usuario: usuario.usuario}, nil
+	g.sessoes[sessaoID] = sessao{email: email, expira: expira}
+	return protocolo.Sessao{ID: sessaoID, ExpiraEm: expira.Format(time.RFC3339), Usuario: usuario.usuario}, nil
 }
 
 /* autorizar
  *
- * Recebe: token: identificador da sessao; perfil: papel exigido, ou vazio para qualquer perfil; g:
+ * Recebe: sessaoID: identificador da sessao; perfil: papel exigido, ou vazio para qualquer perfil; g:
  * estado protegido.
  *
- * O que faz: confere token, validade e perfil. IMPORTANTE: quem chama ja deve manter Lock ou RLock.
+ * O que faz: confere sessao, validade e perfil. IMPORTANTE: quem chama ja deve manter Lock ou RLock.
  *
- * Retorna: Usuario da sessao ou error se o token expirou, nao existe ou nao permite a operacao.
+ * Retorna: Usuario da sessao ou error se ela expirou, nao existe ou nao permite a operacao.
  */
-func (g *GrafoItinerarios) autorizar(token, perfil string) (protocolo.Usuario, error) {
-	s, ok := g.sessoes[token]
+func (g *GrafoItinerarios) autorizar(sessaoID, perfil string) (protocolo.Usuario, error) {
+	s, ok := g.sessoes[sessaoID]
 	if !ok || !s.expira.After(g.agora()) {
 		return protocolo.Usuario{}, fmt.Errorf("sessão inválida ou expirada; autentique-se")
 	}
@@ -203,18 +203,18 @@ func (g *GrafoItinerarios) autorizar(token, perfil string) (protocolo.Usuario, e
 
 /* Desconectar
  *
- * Recebe: token: sessao que sera encerrada; g: estado central.
+ * Recebe: sessaoID: sessao que sera encerrada; g: estado central.
  *
- * O que faz: remove a sessao do token. Nao apaga a conta nem cancela suas reservas.
+ * O que faz: remove a sessao. Nao apaga a conta nem cancela suas reservas.
  *
  * Retorna: nil ao remover a sessao; error quando a sessao nao e valida.
  */
-func (g *GrafoItinerarios) Desconectar(token string) error {
+func (g *GrafoItinerarios) Desconectar(sessaoID string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if _, err := g.autorizar(token, ""); err != nil {
+	if _, err := g.autorizar(sessaoID, ""); err != nil {
 		return err
 	}
-	delete(g.sessoes, token)
+	delete(g.sessoes, sessaoID)
 	return nil
 }

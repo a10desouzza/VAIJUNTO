@@ -40,9 +40,9 @@ const (
 
 /* Requisicao: Envelope recebido. RawMessage adia a leitura de dados ate o roteador conhecer a acao. */
 type Requisicao struct {
-	Acao  string          `json:"acao"`
-	Token string          `json:"token,omitempty"`
-	Dados json.RawMessage `json:"dados"`
+	Acao     string          `json:"acao"`
+	SessaoID string          `json:"sessao,omitempty"`
+	Dados    json.RawMessage `json:"dados"`
 }
 
 /* Resposta: Envelope devolvido ao cliente. dados e omitido quando nao ha conteudo para retornar. */
@@ -73,14 +73,15 @@ type Usuario struct {
 	Perfil string `json:"perfil"`
 }
 
-/* Sessao: Token e validade retornados ao cliente depois de autenticar. */
+/* Sessao: identificador e validade retornados ao cliente depois de cadastrar ou autenticar. */
 type Sessao struct {
-	Token    string  `json:"token"`
+	ID       string  `json:"id"`
 	ExpiraEm string  `json:"expira_em"`
 	Usuario  Usuario `json:"usuario"`
 }
 
-/* OfertaTrecho: Distancia e tempos informados pelo motorista para um par de cidades consecutivas. */
+/* OfertaTrecho: Distancia e tempos informados pelo motorista para um par de cidades consecutivas.
+ * TempoParada vale somente nas cidades intermediarias; o servidor normaliza o ultimo trecho para zero. */
 type OfertaTrecho struct {
 	DistanciaKM float64 `json:"distancia_km"`
 	TempoViagem int     `json:"tempo_viagem_min"`

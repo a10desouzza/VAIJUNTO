@@ -11,7 +11,10 @@
 
 package protocolo
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 /* TestValidarEmail
  *
@@ -70,5 +73,27 @@ func TestValidarNomeSenhaECidade(t *testing.T) {
 		if ValidarCidade(cidade) == nil {
 			t.Errorf("cidade aceita: %q", cidade)
 		}
+	}
+}
+
+func TestValidacoesNosLimitesDeTamanhoEUTF8(t *testing.T) {
+	if err := ValidarSenha("senha válida 123"); err != nil {
+		t.Fatalf("senha válida recusada: %v", err)
+	}
+	for nome, teste := range map[string]func() error{
+		"email acima de 254 bytes":  func() error { return ValidarEmail(strings.Repeat("a", 243) + "@exemplo.com") },
+		"nome acima de 100 bytes":   func() error { return ValidarNome(strings.Repeat("a", 101)) },
+		"senha acima de 128 bytes":  func() error { return ValidarSenha(strings.Repeat("a", 129)) },
+		"cidade acima de 100 bytes": func() error { return ValidarCidade(strings.Repeat("a", 101)) },
+		"email com UTF-8 inválido":  func() error { return ValidarEmail("a@exemplo.com" + string([]byte{0xff})) },
+		"nome com UTF-8 inválido":   func() error { return ValidarNome("Ana" + string([]byte{0xff})) },
+		"senha com UTF-8 inválido":  func() error { return ValidarSenha("senha123" + string([]byte{0xff})) },
+		"cidade com UTF-8 inválido": func() error { return ValidarCidade("Cidade" + string([]byte{0xff})) },
+	} {
+		t.Run(nome, func(t *testing.T) {
+			if err := teste(); err == nil {
+				t.Fatal("valor inválido foi aceito")
+			}
+		})
 	}
 }

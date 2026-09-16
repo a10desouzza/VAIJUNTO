@@ -20,7 +20,7 @@ import (
 
 /* notificacoes
  *
- * Recebe: todas: true inclui lidas; false mostra apenas novas; m: token, endereco e destino de
+ * Recebe: todas: true inclui lidas; false mostra apenas novas; m: sessao, endereco e destino de
  * saida.
  *
  * O que faz: Consulta os avisos do usuario, mostra cada aviso selecionado e so depois envia a
@@ -28,15 +28,15 @@ import (
  * de leitura dos novos. Se essa confirmacao falhar, o aviso pode aparecer novamente.
  *
  * Retorna: nil ao concluir; error de comunicacao ou operacao. A falha na consulta pode limpar o
- * token local.
+ * sessao local.
  */
 func (m *menu) notificacoes(todas bool) error {
-	resp, err := EnviarRequisicao(m.endereco, protocolo.Requisicao{Acao: protocolo.AcaoNotificacoes, Token: m.token, Dados: json.RawMessage(`{}`)})
+	resp, err := EnviarRequisicao(m.endereco, protocolo.Requisicao{Acao: protocolo.AcaoNotificacoes, SessaoID: m.sessaoID, Dados: json.RawMessage(`{}`)})
 	if err != nil {
 		return err
 	}
 	if resp.Status != protocolo.Sucesso {
-		m.token = ""
+		m.sessaoID = ""
 		return fmt.Errorf("%s", resp.Mensagem)
 	}
 	dados, err := json.Marshal(resp.Dados)
@@ -58,7 +58,7 @@ func (m *menu) notificacoes(todas bool) error {
 		/* Confirma a leitura somente depois de mostrar o aviso no terminal. */
 		if !aviso.Lida {
 			raw, _ := json.Marshal(protocolo.Identificador{ID: aviso.ID})
-			confirmacao, err := EnviarRequisicao(m.endereco, protocolo.Requisicao{Acao: protocolo.AcaoLerNotificacao, Token: m.token, Dados: raw})
+			confirmacao, err := EnviarRequisicao(m.endereco, protocolo.Requisicao{Acao: protocolo.AcaoLerNotificacao, SessaoID: m.sessaoID, Dados: raw})
 			if err != nil {
 				return err
 			}

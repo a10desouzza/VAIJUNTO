@@ -30,11 +30,11 @@ import (
  * Retorna: nil quando nao encontra erro; error de leitura ou campo duplicado.
  */
 func verificarJSON(d *json.Decoder) error {
-	token, err := d.Token()
+	elemento, err := d.Token()
 	if err != nil {
 		return err
 	}
-	delim, ok := token.(json.Delim)
+	delim, ok := elemento.(json.Delim)
 	if !ok {
 		return nil
 	}
@@ -136,7 +136,10 @@ func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 		if err := decodificar(req.Dados, &p); err != nil {
 			return nil, err
 		}
-		return g.Cadastrar(p)
+		if _, err := g.Cadastrar(p); err != nil {
+			return nil, err
+		}
+		return g.Autenticar(protocolo.Credenciais{Email: p.Email, Senha: p.Senha})
 	case protocolo.AcaoEntrar:
 		var p protocolo.Credenciais
 		if err := decodificar(req.Dados, &p); err != nil {
@@ -148,48 +151,48 @@ func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 		if err := decodificar(req.Dados, &p); err != nil {
 			return nil, err
 		}
-		return g.Publicar(req.Token, p)
+		return g.Publicar(req.SessaoID, p)
 	case protocolo.AcaoBuscar:
 		var p protocolo.BuscaItinerario
 		if err := decodificar(req.Dados, &p); err != nil {
 			return nil, err
 		}
-		return g.Buscar(req.Token, p)
+		return g.Buscar(req.SessaoID, p)
 	case protocolo.AcaoConfirmar:
 		var p protocolo.ReservaItinerario
 		if err := decodificar(req.Dados, &p); err != nil {
 			return nil, err
 		}
-		return g.Confirmar(req.Token, p)
+		return g.Confirmar(req.SessaoID, p)
 	case protocolo.AcaoCancelarCarona, protocolo.AcaoCancelarReserva, protocolo.AcaoCancelarTrecho, protocolo.AcaoLerNotificacao:
 		var p protocolo.Identificador
 		if err := decodificar(req.Dados, &p); err != nil {
 			return nil, err
 		}
 		if req.Acao == protocolo.AcaoCancelarCarona {
-			return g.CancelarCarona(req.Token, p.ID)
+			return g.CancelarCarona(req.SessaoID, p.ID)
 		}
 		if req.Acao == protocolo.AcaoCancelarTrecho {
-			return g.CancelarTrecho(req.Token, p.ID)
+			return g.CancelarTrecho(req.SessaoID, p.ID)
 		}
 		if req.Acao == protocolo.AcaoLerNotificacao {
-			return nil, g.LerNotificacao(req.Token, p.ID)
+			return nil, g.LerNotificacao(req.SessaoID, p.ID)
 		}
-		return g.CancelarReserva(req.Token, p.ID)
+		return g.CancelarReserva(req.SessaoID, p.ID)
 	case protocolo.AcaoCaronas, protocolo.AcaoReservas, protocolo.AcaoSair, protocolo.AcaoNotificacoes:
 		if err := decodificar(req.Dados, &struct{}{}); err != nil {
 			return nil, err
 		}
 		if req.Acao == protocolo.AcaoNotificacoes {
-			return g.ConsultarNotificacoes(req.Token)
+			return g.ConsultarNotificacoes(req.SessaoID)
 		}
 		if req.Acao == protocolo.AcaoCaronas {
-			return g.ConsultarCaronas(req.Token)
+			return g.ConsultarCaronas(req.SessaoID)
 		}
 		if req.Acao == protocolo.AcaoReservas {
-			return g.ConsultarReservas(req.Token)
+			return g.ConsultarReservas(req.SessaoID)
 		}
-		return nil, g.Desconectar(req.Token)
+		return nil, g.Desconectar(req.SessaoID)
 	default:
 		return nil, fmt.Errorf("ação desconhecida")
 	}

@@ -33,7 +33,7 @@ type menu struct {
 	saida    io.Writer
 	endereco string
 	perfil   string
-	token    string
+	sessaoID string
 	err      error
 
 	nome string
@@ -57,13 +57,13 @@ func ExecutarMenu(endereco, perfil string, entrada io.Reader, saida io.Writer) e
 	fmt.Fprintf(saida, "  Perfil: %s  |  Servidor: %s\n", perfil, endereco)
 	fmt.Fprintln(saida, "  Digite /voltar em qualquer formulário para retornar ao menu.")
 	defer func() {
-		if m.token != "" {
-			EnviarRequisicao(endereco, protocolo.Requisicao{Acao: protocolo.AcaoSair, Token: m.token, Dados: json.RawMessage(`{}`)})
+		if m.sessaoID != "" {
+			EnviarRequisicao(endereco, protocolo.Requisicao{Acao: protocolo.AcaoSair, SessaoID: m.sessaoID, Dados: json.RawMessage(`{}`)})
 		}
 	}()
 	for m.err == nil {
 		var err error
-		if m.token == "" {
+		if m.sessaoID == "" {
 			m.cabecalho("Menu inicial", "")
 			m.opcoes("1 - Entrar", "2 - Criar conta", "0 - Sair")
 			opcao := m.numero("Opção", 0, 2)
@@ -84,7 +84,7 @@ func ExecutarMenu(endereco, perfil string, entrada io.Reader, saida io.Writer) e
 				if err := m.notificacoes(false); err != nil {
 					fmt.Fprintln(saida, "Não foi possível verificar notificações:", err)
 				}
-				if m.token == "" {
+				if m.sessaoID == "" {
 					continue
 				}
 			}
@@ -131,7 +131,7 @@ func ExecutarMenu(endereco, perfil string, entrada io.Reader, saida io.Writer) e
 			case 4:
 				err = m.enviar(protocolo.AcaoSair, struct{}{}, nil)
 				if err == nil {
-					m.token = ""
+					m.sessaoID = ""
 				}
 			}
 		}
@@ -275,12 +275,12 @@ func (m *menu) data() string {
  *
  * Recebe: acao: operacao solicitada; dados: objeto a serializar; alvo: ponteiro para receber os
  * dados da resposta,
- * ou nil quando nao precisa deles; m: endereco, token e estado do formulario.
+ * ou nil quando nao precisa deles; m: endereco, sessao e estado do formulario.
  *
  * O que faz: Monta o envelope uma vez e preserva os dados nas tentativas. Em falha de transporte
  * permite
  * ao usuario reenviar o mesmo pedido, preservando a chave de publicacao/reserva.
- * Invalida o token local ao receber erro de sessao expirada e converte os dados para alvo.
+ * Invalida a sessao local ao receber erro de sessao expirada e converte os dados para alvo.
  *
  * Retorna: nil no sucesso, preenchendo alvo se fornecido; error de formulario, transporte ou
  * recusa do servidor.
@@ -295,7 +295,7 @@ func (m *menu) enviar(acao string, dados, alvo any) error {
 		return err
 	}
 	/* Montamos uma vez, fora das tentativas: o reenvio preserva dados e chave da operacao. */
-	req := protocolo.Requisicao{Acao: acao, Token: m.token, Dados: raw}
+	req := protocolo.Requisicao{Acao: acao, SessaoID: m.sessaoID, Dados: raw}
 	for {
 		resp, err := EnviarRequisicao(m.endereco, req)
 		if err != nil {
@@ -308,7 +308,7 @@ func (m *menu) enviar(acao string, dados, alvo any) error {
 		}
 		if resp.Status != protocolo.Sucesso {
 			if strings.Contains(resp.Mensagem, "sessão inválida ou expirada") {
-				m.token = ""
+				m.sessaoID = ""
 			}
 			return errors.New(resp.Mensagem)
 		}
@@ -327,10 +327,9 @@ func (m *menu) enviar(acao string, dados, alvo any) error {
  *
  * Recebe: Nenhum argumento explicito; usa m para ler nome, e-mail, senha e perfil.
  *
- * O que faz: le os dados, confirma a senha e envia o cadastro com o perfil deste cliente.
+ * O que faz: le os dados, confirma a senha, cria a conta e guarda a sessao devolvida pelo servidor.
  *
- * Retorna: nil apos cadastrar ou error de formulario, rede ou recusa. O login e feito
- * separadamente.
+ * Retorna: nil apos cadastrar e entrar automaticamente, ou error de formulario, rede ou recusa.
  */
 func (m *menu) cadastrar() error {
 	m.cabecalho("Cadastro", "")
@@ -343,10 +342,16 @@ func (m *menu) cadastrar() error {
 		}
 		fmt.Fprintln(m.saida, "As senhas não coincidem. Digite novamente.")
 	}
-	if err := m.enviar(protocolo.AcaoCadastrar, p, nil); err != nil {
+	var sessao protocolo.Sessao
+	if err := m.enviar(protocolo.AcaoCadastrar, p, &sessao); err != nil {
 		return err
 	}
-	fmt.Fprintln(m.saida, "Conta criada. Escolha Entrar para acessar.")
+	if sessao.Usuario.Perfil != m.perfil || sessao.ID == "" {
+		return fmt.Errorf("sessão de cadastro inválida")
+	}
+	m.sessaoID = sessao.ID
+	m.nome = sessao.Usuario.Nome
+	fmt.Fprintf(m.saida, "\nConta criada. Acesso realizado: %s\n", sessao.Usuario.Nome)
 	return nil
 }
 
@@ -354,10 +359,10 @@ func (m *menu) cadastrar() error {
  *
  * Recebe: Nenhum argumento explicito; usa m para ler credenciais e guardar a sessao.
  *
- * O que faz: autentica e guarda o token localmente. Recusa uma conta de perfil diferente do
+ * O que faz: autentica e guarda a sessao localmente. Recusa uma conta de perfil diferente do
  * cliente aberto.
  *
- * Retorna: nil com token e nome armazenados em m; error se o login falhar ou o perfil for
+ * Retorna: nil com sessao e nome armazenados em m; error se o login falhar ou o perfil for
  * diferente.
  */
 func (m *menu) entrar() error {
@@ -368,10 +373,10 @@ func (m *menu) entrar() error {
 		return err
 	}
 	if sessao.Usuario.Perfil != m.perfil {
-		EnviarRequisicao(m.endereco, protocolo.Requisicao{Acao: protocolo.AcaoSair, Token: sessao.Token, Dados: json.RawMessage(`{}`)})
+		EnviarRequisicao(m.endereco, protocolo.Requisicao{Acao: protocolo.AcaoSair, SessaoID: sessao.ID, Dados: json.RawMessage(`{}`)})
 		return fmt.Errorf("esta conta pertence ao perfil %s; abra o cliente correspondente", sessao.Usuario.Perfil)
 	}
-	m.token = sessao.Token
+	m.sessaoID = sessao.ID
 	m.nome = sessao.Usuario.Nome
 	fmt.Fprintf(m.saida, "\nLogin realizado: %s\n", sessao.Usuario.Nome)
 	return nil
@@ -430,7 +435,11 @@ func (m *menu) publicar() error {
 			fmt.Fprintln(m.saida, "O preço do trecho não pode ultrapassar R$ 1000000.")
 			distancia = m.decimal("Distância deste trecho em km", 0.01, 100000)
 		}
-		p.Trechos = append(p.Trechos, protocolo.OfertaTrecho{DistanciaKM: distancia, TempoViagem: m.numero("Tempo de viagem em minutos", 1, 10080), TempoParada: m.numero("Parada após este trecho em minutos", 0, 10080)})
+		trecho := protocolo.OfertaTrecho{DistanciaKM: distancia, TempoViagem: m.numero("Tempo de viagem em minutos", 1, 10080)}
+		if i < n-2 {
+			trecho.TempoParada = m.numero("Parada após este trecho em minutos", 0, 10080)
+		}
+		p.Trechos = append(p.Trechos, trecho)
 	}
 	if m.err != nil {
 		return m.err
@@ -439,7 +448,11 @@ func (m *menu) publicar() error {
 	fmt.Fprintf(m.saida, "  Partida: %s\n  Assentos: %d\n", horarioLegivel(p.DataHora), p.Assentos)
 	for i, t := range p.Trechos {
 		centavos := (int64(math.Round(p.ValorKM*100))*int64(math.Round(t.DistanciaKM*100)) + 50) / 100
-		fmt.Fprintf(m.saida, "  %s -> %s: %.2f km x %s/km = %s | %d min + %d min de parada\n", p.Rota[i], p.Rota[i+1], t.DistanciaKM, dinheiro(p.ValorKM), dinheiro(float64(centavos)/100), t.TempoViagem, t.TempoParada)
+		fmt.Fprintf(m.saida, "  %s -> %s: %.2f km x %s/km = %s | %d min", p.Rota[i], p.Rota[i+1], t.DistanciaKM, dinheiro(p.ValorKM), dinheiro(float64(centavos)/100), t.TempoViagem)
+		if i < len(p.Trechos)-1 {
+			fmt.Fprintf(m.saida, " + %d min de parada", t.TempoParada)
+		}
+		fmt.Fprintln(m.saida)
 	}
 	if m.numero("Publicar? 1 = sim, 0 = voltar", 0, 1) != 1 {
 		return nil
@@ -459,7 +472,7 @@ func (m *menu) publicar() error {
 
 /* caronas
  *
- * Recebe: Nenhum argumento explicito; usa m.token e m.endereco.
+ * Recebe: Nenhum argumento explicito; usa m.sessaoID e m.endereco.
  *
  * O que faz: consulta e mostra vagas e passageiros por trecho. Retorna a lista para selecao.
  *
@@ -604,7 +617,7 @@ func (m *menu) mostrarReserva(r protocolo.Reserva) {
 
 /* reservas
  *
- * Recebe: Nenhum argumento explicito; usa m.token e m.endereco.
+ * Recebe: Nenhum argumento explicito; usa m.sessaoID e m.endereco.
  *
  * O que faz: consulta e apresenta as reservas do passageiro. Retorna a lista para as outras
  * operacoes.

@@ -35,7 +35,7 @@ func copiarReserva(r protocolo.Reserva) protocolo.Reserva {
 
 /* Confirmar
  *
- * Recebe: token: sessao do passageiro; p: chave da operacao e IDs dos trechos em ordem; g: estado
+ * Recebe: sessaoID: sessao do passageiro; p: chave da operacao e IDs dos trechos em ordem; g: estado
  * central.
  *
  * O que faz: Adquire a trava exclusiva, autoriza a sessao e verifica repeticao. Confere todos os
@@ -46,7 +46,7 @@ func copiarReserva(r protocolo.Reserva) protocolo.Reserva {
  * Retorna: Reserva completa ou reserva existente da mesma chave; error sem descontar vagas se a
  * verificacao falhar.
  */
-func (g *GrafoItinerarios) Confirmar(token string, p protocolo.ReservaItinerario) (protocolo.Reserva, error) {
+func (g *GrafoItinerarios) Confirmar(sessaoID string, p protocolo.ReservaItinerario) (protocolo.Reserva, error) {
 	if err := validarChave(p.Chave); err != nil {
 		return protocolo.Reserva{}, err
 	}
@@ -56,7 +56,7 @@ func (g *GrafoItinerarios) Confirmar(token string, p protocolo.ReservaItinerario
 	/* A mesma trava cobre verificacao e alteracao. O defer libera inclusive nos retornos de erro. */
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	u, err := g.autorizar(token, protocolo.Passageiro)
+	u, err := g.autorizar(sessaoID, protocolo.Passageiro)
 	if err != nil {
 		return protocolo.Reserva{}, err
 	}
@@ -123,16 +123,16 @@ func (g *GrafoItinerarios) Confirmar(token string, p protocolo.ReservaItinerario
 
 /* ConsultarReservas
  *
- * Recebe: token: sessao do passageiro; g: estado central.
+ * Recebe: sessaoID: sessao do passageiro; g: estado central.
  *
  * O que faz: retorna copias das reservas do passageiro autenticado.
  *
  * Retorna: Lista de copias das reservas desse passageiro, ordenada por ID, ou error de autorizacao.
  */
-func (g *GrafoItinerarios) ConsultarReservas(token string) ([]protocolo.Reserva, error) {
+func (g *GrafoItinerarios) ConsultarReservas(sessaoID string) ([]protocolo.Reserva, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	u, err := g.autorizar(token, protocolo.Passageiro)
+	u, err := g.autorizar(sessaoID, protocolo.Passageiro)
 	if err != nil {
 		return nil, err
 	}
@@ -177,16 +177,16 @@ func (g *GrafoItinerarios) cancelarReserva(id, motivo string) protocolo.Reserva 
 
 /* CancelarReserva
  *
- * Recebe: token: sessao do passageiro; id: reserva escolhida; g: estado central.
+ * Recebe: sessaoID: sessao do passageiro; id: reserva escolhida; g: estado central.
  *
  * O que faz: confere o dono e o inicio do itinerario antes de cancelar a reserva inteira.
  *
  * Retorna: Reserva cancelada ou error se nao pertencer ao passageiro ou se o itinerario ja iniciou.
  */
-func (g *GrafoItinerarios) CancelarReserva(token, id string) (protocolo.Reserva, error) {
+func (g *GrafoItinerarios) CancelarReserva(sessaoID, id string) (protocolo.Reserva, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	u, err := g.autorizar(token, protocolo.Passageiro)
+	u, err := g.autorizar(sessaoID, protocolo.Passageiro)
 	if err != nil {
 		return protocolo.Reserva{}, err
 	}
@@ -202,17 +202,17 @@ func (g *GrafoItinerarios) CancelarReserva(token, id string) (protocolo.Reserva,
 
 /* CancelarCarona
  *
- * Recebe: token: sessao do motorista; id: carona escolhida; g: estado central.
+ * Recebe: sessaoID: sessao do motorista; id: carona escolhida; g: estado central.
  *
  * O que faz: valida motorista e horarios, cancela a oferta e as reservas ativas que dependem dela.
  *
  * Retorna: Carona cancelada ou error de propriedade/horario; repetir um cancelamento concluido
  * devolve a carona.
  */
-func (g *GrafoItinerarios) CancelarCarona(token, id string) (protocolo.Carona, error) {
+func (g *GrafoItinerarios) CancelarCarona(sessaoID, id string) (protocolo.Carona, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	u, err := g.autorizar(token, protocolo.Motorista)
+	u, err := g.autorizar(sessaoID, protocolo.Motorista)
 	if err != nil {
 		return protocolo.Carona{}, err
 	}

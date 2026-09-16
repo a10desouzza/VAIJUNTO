@@ -40,19 +40,19 @@ type Metricas struct {
 
 /* chamar
  *
- * Recebe: endereco: servidor TCP; acao: operacao; token: sessao; dados: objeto do pedido;
+ * Recebe: endereco: servidor TCP; acao: operacao; sessaoID: sessao; dados: objeto do pedido;
  * alvo: ponteiro para os dados da resposta, ou nil para ignorar esses dados.
  *
  * O que faz: envia a operacao TCP e converte os dados para alvo. Propaga falhas como erro.
  *
  * Retorna: nil na resposta de sucesso; error na serializacao, transporte, recusa ou conversao.
  */
-func chamar(endereco, acao, token string, dados any, alvo any) error {
+func chamar(endereco, acao, sessaoID string, dados any, alvo any) error {
 	raw, err := json.Marshal(dados)
 	if err != nil {
 		return err
 	}
-	resposta, err := cliente.EnviarRequisicao(endereco, protocolo.Requisicao{Acao: acao, Token: token, Dados: raw})
+	resposta, err := cliente.EnviarRequisicao(endereco, protocolo.Requisicao{Acao: acao, SessaoID: sessaoID, Dados: raw})
 	if err != nil {
 		return err
 	}
@@ -74,18 +74,15 @@ func chamar(endereco, acao, token string, dados any, alvo any) error {
  * Recebe: endereco: servidor; email: identificador da conta de teste; perfil: MOTORISTA ou
  * PASSAGEIRO.
  *
- * O que faz: cadastra e autentica uma conta de teste, retornando seu token.
+ * O que faz: cadastra uma conta de teste e recebe a sessao criada automaticamente.
  *
- * Retorna: Token da sessao e nil, ou error se o cadastro/login falhar.
+ * Retorna: Identificador da sessao e nil, ou error se o cadastro falhar.
  */
 func criarUsuario(endereco, email, perfil string) (string, error) {
 	senha := "senha-carga-" + email
-	if err := chamar(endereco, protocolo.AcaoCadastrar, "", protocolo.Cadastro{Nome: "Teste de carga", Email: email, Senha: senha, Perfil: perfil}, nil); err != nil {
-		return "", err
-	}
 	var sessao protocolo.Sessao
-	err := chamar(endereco, protocolo.AcaoEntrar, "", protocolo.Credenciais{Email: email, Senha: senha}, &sessao)
-	return sessao.Token, err
+	err := chamar(endereco, protocolo.AcaoCadastrar, "", protocolo.Cadastro{Nome: "Teste de carga", Email: email, Senha: senha, Perfil: perfil}, &sessao)
+	return sessao.ID, err
 }
 
 /* Executar
@@ -112,37 +109,37 @@ func Executar(endereco string, quantidade, vagas int) (Metricas, error) {
 	motoristas := make([]string, 2)
 	caronas := make([]protocolo.Carona, 2)
 	for i := range motoristas {
-		token, err := criarUsuario(endereco, fmt.Sprintf("m%d-%s@carga.test", i, prefixo), protocolo.Motorista)
+		sessaoID, err := criarUsuario(endereco, fmt.Sprintf("m%d-%s@carga.test", i, prefixo), protocolo.Motorista)
 		if err != nil {
 			return m, err
 		}
-		motoristas[i] = token
+		motoristas[i] = sessaoID
 		cidades := []string{"Carga-" + prefixo + "-A", "Carga-" + prefixo + "-B", "Carga-" + prefixo + "-C"}
 		hora := "2099-10-01T08:00:00-03:00"
 		if i == 1 {
 			hora = "2099-10-01T09:15:00-03:00"
 		}
-		oferta := protocolo.PublicacaoCarona{ValorKM: 1, Chave: "carga", Rota: cidades[i : i+2], DataHora: hora, Assentos: vagas, Trechos: []protocolo.OfertaTrecho{{DistanciaKM: 10, TempoViagem: 60, TempoParada: 15}}}
-		if err := chamar(endereco, protocolo.AcaoPublicar, token, oferta, &caronas[i]); err != nil {
+		oferta := protocolo.PublicacaoCarona{ValorKM: 1, Chave: "carga", Rota: cidades[i : i+2], DataHora: hora, Assentos: vagas, Trechos: []protocolo.OfertaTrecho{{DistanciaKM: 10, TempoViagem: 60}}}
+		if err := chamar(endereco, protocolo.AcaoPublicar, sessaoID, oferta, &caronas[i]); err != nil {
 			return m, err
 		}
 	}
 	defer func() {
-		for i, token := range motoristas {
-			chamar(endereco, protocolo.AcaoCancelarCarona, token, protocolo.Identificador{ID: caronas[i].ID}, nil)
+		for i, sessaoID := range motoristas {
+			chamar(endereco, protocolo.AcaoCancelarCarona, sessaoID, protocolo.Identificador{ID: caronas[i].ID}, nil)
 		}
 	}()
-	tokens := make([]string, quantidade)
-	for i := range tokens {
-		token, err := criarUsuario(endereco, fmt.Sprintf("p%d-%s@carga.test", i, prefixo), protocolo.Passageiro)
+	sessoes := make([]string, quantidade)
+	for i := range sessoes {
+		sessaoID, err := criarUsuario(endereco, fmt.Sprintf("p%d-%s@carga.test", i, prefixo), protocolo.Passageiro)
 		if err != nil {
 			return m, err
 		}
-		tokens[i] = token
+		sessoes[i] = sessaoID
 	}
 	defer func() {
-		for _, token := range tokens {
-			chamar(endereco, protocolo.AcaoSair, token, struct{}{}, nil)
+		for _, sessaoID := range sessoes {
+			chamar(endereco, protocolo.AcaoSair, sessaoID, struct{}{}, nil)
 		}
 	}()
 	ids := []string{caronas[0].Trechos[0].Trecho.ID, caronas[1].Trechos[0].Trecho.ID}
@@ -156,14 +153,14 @@ func Executar(endereco string, quantidade, vagas int) (Metricas, error) {
 	/* Barreira de inicio: todas as goroutines esperam o fechamento do mesmo canal. */
 	inicio := make(chan struct{})
 	var wg sync.WaitGroup
-	for i, token := range tokens {
+	for i, sessaoID := range sessoes {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-inicio
 			/* A medicao comeca apos preparar usuarios e ofertas; cobre a disputa pelas reservas. */
 			instante := time.Now()
-			resposta, err := cliente.EnviarRequisicao(endereco, protocolo.Requisicao{Acao: protocolo.AcaoConfirmar, Token: token, Dados: pedido})
+			resposta, err := cliente.EnviarRequisicao(endereco, protocolo.Requisicao{Acao: protocolo.AcaoConfirmar, SessaoID: sessaoID, Dados: pedido})
 			/* Cada goroutine escreve em seu indice; a leitura so ocorre depois do Wait. */
 			resultados[i] = resultado{resposta: resposta, err: err, duracao: time.Since(instante)}
 		}()
@@ -208,9 +205,9 @@ func Executar(endereco string, quantidade, vagas int) (Metricas, error) {
 	m.LatenciaP95MS = latencias[int(math.Ceil(float64(quantidade)*0.95))-1]
 	m.DuracaoMS = float64(duracao) / float64(time.Millisecond)
 	m.RequisicoesSegundo = float64(quantidade) / duracao.Seconds()
-	for i, token := range motoristas {
+	for i, sessaoID := range motoristas {
 		var publicadas []protocolo.Carona
-		if err := chamar(endereco, protocolo.AcaoCaronas, token, struct{}{}, &publicadas); err != nil {
+		if err := chamar(endereco, protocolo.AcaoCaronas, sessaoID, struct{}{}, &publicadas); err != nil {
 			return m, err
 		}
 		if len(publicadas) != 1 || len(publicadas[0].Trechos) != 1 {

@@ -14,10 +14,46 @@ package cliente
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"vaijunto/internal/protocolo"
 )
+
+func TestPublicarPerguntaParadaSomenteNasCidadesIntermediarias(t *testing.T) {
+	for _, n := range []int{2, 3, 8, 21} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			var entrada strings.Builder
+			fmt.Fprintln(&entrada, n)
+			for i := 0; i < n; i++ {
+				fmt.Fprintf(&entrada, "Cidade %c\n", 'A'+i)
+			}
+			fmt.Fprint(&entrada, "2099-10-01\n08:00\n3\n2\n")
+			for i := 0; i < n-1; i++ {
+				fmt.Fprint(&entrada, "10\n60\n")
+				if i < n-2 {
+					fmt.Fprintln(&entrada, "15")
+				}
+			}
+			// Desiste na confirmação; não precisa de servidor nem de conexão.
+			fmt.Fprint(&entrada, "0\nproxima entrada\n")
+			var saida bytes.Buffer
+			m := &menu{leitor: bufio.NewScanner(strings.NewReader(entrada.String())), saida: &saida}
+			if err := m.publicar(); err != nil || m.err != nil {
+				t.Fatalf("publicar: %v; entrada: %v", err, m.err)
+			}
+			if got := strings.Count(saida.String(), "Parada após este trecho em minutos"); got != n-2 {
+				t.Fatalf("perguntas de parada: %d; esperado %d", got, n-2)
+			}
+			if got := strings.Count(saida.String(), "min de parada"); got != n-2 {
+				t.Fatalf("resumo de paradas: %d; esperado %d", got, n-2)
+			}
+			if !m.leitor.Scan() || m.leitor.Text() != "proxima entrada" {
+				t.Fatal("consumiu entrada além da confirmação")
+			}
+		})
+	}
+}
 
 /* TestCamposRepetemAteValorValido
  *

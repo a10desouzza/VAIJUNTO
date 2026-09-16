@@ -81,14 +81,14 @@ func assinatura(v any) string {
 
 /* Publicar
  *
- * Recebe: token: sessao do motorista; p: rota, partida, vagas, valor/km, distancias, tempos e
+ * Recebe: sessaoID: sessao do motorista; p: rota, partida, vagas, valor/km, distancias, tempos e
  * chave; g: estado central.
  *
  * O que faz: valida a oferta e cria a carona e seus trechos. Retorna a carona publicada ou erro.
  *
  * Retorna: Carona criada ou anteriormente criada pela mesma chave e dados; error nas validacoes.
  */
-func (g *GrafoItinerarios) Publicar(token string, p protocolo.PublicacaoCarona) (protocolo.Carona, error) {
+func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCarona) (protocolo.Carona, error) {
 	if err := validarChave(p.Chave); err != nil {
 		return protocolo.Carona{}, err
 	}
@@ -123,9 +123,12 @@ func (g *GrafoItinerarios) Publicar(token string, p protocolo.PublicacaoCarona) 
 			return protocolo.Carona{}, fmt.Errorf("distância deve ser positiva, até 100000 km e duas casas decimais; preço calculado até 1000000; viagem de 1 a 10080 e parada de 0 a 10080 minutos")
 		}
 	}
+	// O destino final encerra a carona. Normalizamos antes da assinatura para
+	// aceitar clientes antigos sem criar espera artificial nem alterar a entrada do chamador.
+	p.Trechos[len(p.Trechos)-1].TempoParada = 0
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	u, err := g.autorizar(token, protocolo.Motorista)
+	u, err := g.autorizar(sessaoID, protocolo.Motorista)
 	if err != nil {
 		return protocolo.Carona{}, err
 	}
@@ -186,17 +189,17 @@ func (g *GrafoItinerarios) consultarCarona(id string) protocolo.Carona {
 
 /* ConsultarCaronas
  *
- * Recebe: token: sessao do motorista; g: estado central.
+ * Recebe: sessaoID: sessao do motorista; g: estado central.
  *
  * O que faz: retorna apenas as ofertas do motorista autenticado, ordenadas por ID.
  *
  * Retorna: Lista das caronas desse motorista, inclusive canceladas; lista vazia se nao houver;
  * error de autorizacao.
  */
-func (g *GrafoItinerarios) ConsultarCaronas(token string) ([]protocolo.Carona, error) {
+func (g *GrafoItinerarios) ConsultarCaronas(sessaoID string) ([]protocolo.Carona, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	u, err := g.autorizar(token, protocolo.Motorista)
+	u, err := g.autorizar(sessaoID, protocolo.Motorista)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +253,7 @@ func conectam(a, b protocolo.Trecho) bool {
 
 /* Buscar
  *
- * Recebe: token: sessao do passageiro; b: origem, destino, data, ordenacao e limite de trechos; g:
+ * Recebe: sessaoID: sessao do passageiro; b: origem, destino, data, ordenacao e limite de trechos; g:
  * estado central.
  *
  * O que faz: recebe origem, destino, data e ordenacao. Explora caminhos por DFS e retorna opcoes
@@ -259,7 +262,7 @@ func conectam(a, b protocolo.Trecho) bool {
  * Retorna: ResultadoBusca com opcoes, limite e aviso de exploracao limitada, ou error de
  * validacao/autorizacao.
  */
-func (g *GrafoItinerarios) Buscar(token string, b protocolo.BuscaItinerario) (protocolo.ResultadoBusca, error) {
+func (g *GrafoItinerarios) Buscar(sessaoID string, b protocolo.BuscaItinerario) (protocolo.ResultadoBusca, error) {
 	if chaveCidade(b.Origem) == "" || chaveCidade(b.Destino) == "" || chaveCidade(b.Origem) == chaveCidade(b.Destino) {
 		return protocolo.ResultadoBusca{}, fmt.Errorf("origem e destino devem ser distintos e não vazios")
 	}
@@ -279,7 +282,7 @@ func (g *GrafoItinerarios) Buscar(token string, b protocolo.BuscaItinerario) (pr
 		return protocolo.ResultadoBusca{}, fmt.Errorf("ordenar_por deve ser PRECO, TEMPO ou TRECHOS")
 	}
 	g.mu.RLock()
-	if _, err := g.autorizar(token, protocolo.Passageiro); err != nil {
+	if _, err := g.autorizar(sessaoID, protocolo.Passageiro); err != nil {
 		g.mu.RUnlock()
 		return protocolo.ResultadoBusca{}, err
 	}

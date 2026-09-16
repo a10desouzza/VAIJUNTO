@@ -3,7 +3,7 @@
  * Autor: Arthur Souza
  *
  * Comunicacao reutilizavel: abre um socket por operacao, envia NDJSON e fecha apos a resposta.
- * O token identifica a sessao mesmo quando a conexao anterior ja foi encerrada.
+ * O identificador de sessao reconhece o usuario mesmo quando a conexao anterior foi encerrada.
  *
  * DIVISAO DE RESPONSABILIDADES:
  * O cliente coleta entradas e exibe respostas; o servidor decide permissoes, disponibilidade e
@@ -24,7 +24,7 @@ import (
 
 /* EnviarRequisicao
  *
- * Recebe: endereco: IP ou nome e porta do servidor; req: envelope com acao, token e dados.
+ * Recebe: endereco: IP ou nome e porta do servidor; req: envelope com acao, sessao e dados.
  *
  * O que faz: Serializa a requisicao, conecta com prazo de 5 segundos e define 30 segundos para a
  * operacao.

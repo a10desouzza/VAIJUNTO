@@ -17,7 +17,6 @@ services:
     entrypoint: ["/bin/cliente_motorista"]
     environment:
       VAIJUNTO_SERVIDOR: "${VAIJUNTO_SERVIDOR:-servidor:8080}"
-      VAIJUNTO_TOKEN: "${VAIJUNTO_TOKEN:-}"
     stdin_open: true
   passageiro:
     image: vaijunto:local
@@ -28,7 +27,6 @@ services:
     entrypoint: ["/bin/cliente_passageiro"]
     environment:
       VAIJUNTO_SERVIDOR: "${VAIJUNTO_SERVIDOR:-servidor:8080}"
-      VAIJUNTO_TOKEN: "${VAIJUNTO_TOKEN:-}"
     stdin_open: true
   carga:
     image: vaijunto:local

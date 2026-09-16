@@ -48,7 +48,7 @@ func usuario(t testing.TB, g *servidor.GrafoItinerarios, email, perfil string) s
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s.Token
+	return s.ID
 }
 
 /* preparar
@@ -57,7 +57,7 @@ func usuario(t testing.TB, g *servidor.GrafoItinerarios, email, perfil string) s
  *
  * O que faz: Isola os dados de cada teste e prepara contas com perfis diferentes.
  *
- * Retorna: Ambiente com grafo novo e tokens de dois motoristas e dois passageiros.
+ * Retorna: Ambiente com grafo novo e sessoes de dois motoristas e dois passageiros.
  */
 func preparar(t testing.TB) ambiente {
 	t.Helper()
@@ -84,16 +84,16 @@ func oferta(chave string, rota []string, hora string, vagas int) protocolo.Publi
 
 /* publicar
  *
- * Recebe: t: controle do teste; a: ambiente; token: motorista; chave, rota, hora e vagas: dados da
+ * Recebe: t: controle do teste; a: ambiente; sessaoID: motorista; chave, rota, hora e vagas: dados da
  * oferta.
  *
  * O que faz: Usa a funcao oferta e publica no estado central do cenario.
  *
  * Retorna: Carona publicada. Interrompe o teste com Fatal se a preparacao falhar.
  */
-func publicar(t testing.TB, a ambiente, token, chave string, rota []string, hora string, vagas int) protocolo.Carona {
+func publicar(t testing.TB, a ambiente, sessaoID, chave string, rota []string, hora string, vagas int) protocolo.Carona {
 	t.Helper()
-	c, err := a.g.Publicar(token, oferta(chave, rota, hora, vagas))
+	c, err := a.g.Publicar(sessaoID, oferta(chave, rota, hora, vagas))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func ids(c protocolo.Carona) []string {
  *
  * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
  *
- * O que faz: Verifica senha incorreta, perfil inadequado, token invalido e revogacao da sessao.
+ * O que faz: Verifica senha incorreta, perfil inadequado, sessao invalida e revogacao da sessao.
  *
  * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
  * verificacoes.
@@ -137,7 +137,7 @@ func TestAutenticacaoEAutorizacao(t *testing.T) {
 		t.Fatal("passageiro publicou")
 	}
 	if _, err := a.g.ConsultarCaronas("invalido"); err == nil {
-		t.Fatal("token inválido aceito")
+		t.Fatal("sessão inválida aceita")
 	}
 	if err := a.g.Desconectar(a.passageiro); err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestMultigrafoDataConexoesEOrdenacao(t *testing.T) {
 	publicar(t, a, a.motorista, "ab", []string{"A", "B"}, "2099-10-01T08:00:00-03:00", 2)
 	publicar(t, a, a.outroMotorista, "bc", []string{"B", "C"}, "2099-10-01T09:15:00-03:00", 2)
 	publicar(t, a, a.motorista, "ab2", []string{"A", "B"}, "2099-10-01T08:00:00-03:00", 2)
-	publicar(t, a, a.outroMotorista, "cedo", []string{"B", "C"}, "2099-10-01T09:14:00-03:00", 2)
+	publicar(t, a, a.outroMotorista, "cedo", []string{"B", "C"}, "2099-10-01T08:59:00-03:00", 2)
 	publicar(t, a, a.motorista, "amanha", []string{"A", "C"}, "2099-10-02T08:00:00-03:00", 2)
 	publicar(t, a, a.outroMotorista, "ciclo", []string{"B", "A"}, "2099-10-01T09:15:00-03:00", 2)
 	direto := oferta("direto", []string{"A", "C"}, "2099-10-01T08:00:00-03:00", 2)
@@ -209,11 +209,11 @@ func TestConcorrenciaUltimoAssento(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-inicio
-			token := a.passageiro
+			sessaoID := a.passageiro
 			if i%2 == 1 {
-				token = a.outroPassageiro
+				sessaoID = a.outroPassageiro
 			}
-			if _, err := a.g.Confirmar(token, protocolo.ReservaItinerario{Chave: fmt.Sprint(i), TrechosIDs: ids(c)}); err == nil {
+			if _, err := a.g.Confirmar(sessaoID, protocolo.ReservaItinerario{Chave: fmt.Sprint(i), TrechosIDs: ids(c)}); err == nil {
 				sucessos.Add(1)
 			}
 		}()
