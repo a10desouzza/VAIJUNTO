@@ -20,6 +20,7 @@ func (m *menu) notificacoes(todas bool) error {
 	if err != nil {
 		return err
 	}
+	// se servidor respondeu algo diferente de sucesso, sessao pode ter ficado inativa
 	if resp.Status != protocolo.Sucesso {
 		m.sessaoID = ""
 		return fmt.Errorf("%s", resp.Mensagem)

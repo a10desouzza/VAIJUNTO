@@ -16,18 +16,20 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
+// cria uma variavel global chamada voltar
 var voltar = errors.New("voltar ao menu")
 
 // cabecalho: imprime titulo e detalhe opcional. Sem retorno.
 func (m *menu) cabecalho(titulo, detalhe string) {
 	fmt.Fprintf(m.saida, "\n--- %s ---\n", titulo)
-	if detalhe != "" {
+	if detalhe != "" { // imprime detalhe se houver
 		fmt.Fprintln(m.saida, detalhe)
 	}
 }
 
 // opcoes: imprime as opcoes recebidas. Sem retorno.
 func (m *menu) opcoes(opcoes ...string) {
+	// imprime cada opcao em uma linha
 	for _, opcao := range opcoes {
 		fmt.Fprintln(m.saida, opcao)
 	}
@@ -37,14 +39,16 @@ func (m *menu) opcoes(opcoes ...string) {
 // campo: normaliza o texto quando solicitado e repete a entrada enquanto a validacao indicar erro.
 // Retorna: Texto validado ou string vazia na interrupcao, que fica registrada em m.err.
 func (m *menu) campo(rotulo string, normalizar func(string) string, validar func(string) error) string {
-	for m.err == nil {
-		valor := m.texto(rotulo)
-		if m.err != nil {
+	for m.err == nil { // repete enquanto nao houver interrupcao
+		valor := m.texto(rotulo) // pede ao usuario um texto
+
+		if m.err != nil { // se usuario saiu do formulario ou entrada acabou, retorna string vazia
 			return ""
 		}
-		if normalizar != nil {
+		if normalizar != nil { // se houver funcao de normalizacao, aplica ao valor
 			valor = normalizar(valor)
 		}
+		// tenta validar o valor; se houver erro, imprime e repete a leitura
 		if err := validar(valor); err != nil {
 			fmt.Fprintln(m.saida, err.Error())
 			continue
@@ -63,16 +67,21 @@ func (m *menu) email() string {
 // cidade: le uma cidade e impede repeticao entre os nomes ja informados. Retorna: Cidade validada
 // com espacos normalizados ou string vazia na interrupcao.
 func (m *menu) cidade(rotulo string, anteriores []string) string {
+	// normaliza espacos e valida cidade; repete se houver erro ou repeticao
 	return m.campo(rotulo, func(s string) string { return strings.Join(strings.Fields(s), " ") }, func(s string) error {
+		//usa a validacao padrao da cidade, se falhar devolve erro
 		if err := protocolo.ValidarCidade(s); err != nil {
 			return err
 		}
+		// percorre cidades ja informadas
 		for _, anterior := range anteriores {
+			// compara o texto ignorando maiusculas e minusculas
 			if strings.EqualFold(s, anterior) {
+				// impede rota com cidades repetidas
 				return fmt.Errorf("esta cidade já foi informada; escolha uma cidade diferente")
 			}
 		}
-		return nil
+		return nil // se chegou aqui, a cidade e valida e nao repetida
 	})
 }
 
@@ -85,25 +94,28 @@ func dinheiro(valor float64) string {
 // horarioLegivel: converte RFC3339 para data, hora e fuso; preserva o texto se a conversao falhar.
 // Retorna: Texto com data, hora e fuso; se nao conseguir interpretar, retorna o texto original.
 func horarioLegivel(valor string) string {
-	t, err := time.Parse(time.RFC3339, valor)
+	t, err := time.Parse(time.RFC3339, valor) // tenta interpretar horario como RFC3339
 	if err != nil {
 		return valor
 	}
-	return t.Format("02/01/2006 às 15:04 (-07:00)")
+	return t.Format("02/01/2006 às 15:04 (-07:00)") // formata horario pra uma pessoa ler
 }
 
 // caracteresSeguros: rejeita controles e caracteres de formatacao invisiveis na entrada do
 // terminal. Retorna: false se encontrar controle ou caractere invisivel de formatacao; true caso
 // contrario.
 func caracteresSeguros(s string) bool {
+	//percorre cada caractere da string
 	for _, r := range s {
+		// se for caractere de controle ou invisivel de formatacao, retorna falso
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return false
 		}
 	}
-	return true
+	return true // se chegou aqui, todos os caracteres sao seguros
 }
 
+// cria uma expressao para validar precos
 var formatoDecimal = regexp.MustCompile(`^[0-9]+(\.[0-9]{1,2})?$`)
 
 // texto: le uma linha preenchida. Registra EOF ou /voltar em m.err para interromper o formulario.
@@ -111,7 +123,7 @@ var formatoDecimal = regexp.MustCompile(`^[0-9]+(\.[0-9]{1,2})?$`)
 // registrada em m.err.
 func (m *menu) texto(rotulo string) string {
 	for m.err == nil {
-		fmt.Fprintf(m.saida, "%s: ", rotulo)
+		fmt.Fprintf(m.saida, "%s: ", rotulo) // mostra a pergunta
 		if !m.leitor.Scan() {
 			m.err = m.leitor.Err()
 			if m.err == nil {
@@ -120,18 +132,21 @@ func (m *menu) texto(rotulo string) string {
 			return ""
 		}
 		s := strings.TrimSpace(m.leitor.Text())
+		// se o usuario digitou /voltar, interrompe o formulario e retorna string vazia
 		if s == "/voltar" {
 			m.err = voltar
 			return ""
 		}
+		// se houver caracteres de controle ou invisiveis, avisa e repete a leitura
 		if !caracteresSeguros(s) {
 			fmt.Fprintln(m.saida, "Não use caracteres de controle neste campo.")
 			continue
 		}
+		// se nao esta vazio, retorna o texto; senao, avisa e repete a leitura
 		if s != "" {
 			return s
 		}
-		fmt.Fprintln(m.saida, "Preencha este campo.")
+		fmt.Fprintln(m.saida, "Preencha este campo.") // se o usuario so apertou enter, pede pra preencher e repete a leitura
 	}
 	return ""
 }

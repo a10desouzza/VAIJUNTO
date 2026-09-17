@@ -15,24 +15,26 @@ import (
 )
 
 type menu struct {
-	leitor   *bufio.Scanner
-	saida    io.Writer
-	endereco string
-	perfil   string
-	sessaoID string
-	err      error
+	leitor   *bufio.Scanner // ler entrada do usuario
+	saida    io.Writer      // escrever saida para o usuario
+	endereco string         // endereco do servidor
+	perfil   string         // perfil do usuario (motorista ou passageiro)
+	sessaoID string         // id da sessao do usuario apos login
+	err      error          // erro de leitura ou interrupcao do usuario
 
-	nome string
+	nome string // nome do usuario logado, para apresentar no menu
 }
 
 // ExecutarMenu: mantem o fluxo de login e operacoes. Entrada e saida sao parametros para permitir
 // testes. Retorna: nil ao sair normalmente ou atingir EOF; error de leitura quando nao houver
 // encerramento normal.
 func ExecutarMenu(endereco, perfil string, entrada io.Reader, saida io.Writer) error {
+	// cria o menu com leitor e escritor, endereco e perfil do usuario
 	m := &menu{leitor: bufio.NewScanner(entrada), saida: saida, endereco: endereco, perfil: perfil}
 	m.cabecalho("VaiJunto", "")
 	fmt.Fprintf(saida, "  Perfil: %s  |  Servidor: %s\n", perfil, endereco)
 	fmt.Fprintln(saida, "  Digite /voltar em qualquer formulário para retornar ao menu.")
+	// garante que o logout seja enviado ao servidor quando o menu for encerrado
 	defer func() {
 		if m.sessaoID != "" {
 			EnviarRequisicao(endereco, protocolo.Requisicao{Acao: protocolo.AcaoSair, SessaoID: m.sessaoID, Dados: json.RawMessage(`{}`)})
@@ -57,6 +59,7 @@ func ExecutarMenu(endereco, perfil string, entrada io.Reader, saida io.Writer) e
 				err = m.cadastrar()
 			}
 		} else {
+			// Se for passageiro, o menu tenta buscar notificações antes de mostrar as opções
 			if perfil == protocolo.Passageiro {
 				if err := m.notificacoes(false); err != nil {
 					fmt.Fprintln(saida, "Não foi possível verificar notificações:", err)

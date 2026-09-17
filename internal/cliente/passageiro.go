@@ -47,11 +47,13 @@ func (m *menu) buscar() error {
 	if err != nil {
 		return err
 	}
+	// envia a chave e os IDs dos trechos na ordem do percurso para confirmar a reserva
 	p := protocolo.ReservaItinerario{Chave: chave, TrechosIDs: make([]string, 0, len(it.Trechos))}
 	for _, t := range it.Trechos {
 		p.TrechosIDs = append(p.TrechosIDs, t.ID)
 	}
 	var reserva protocolo.Reserva
+
 	if err := m.enviar(protocolo.AcaoConfirmar, p, &reserva); err != nil {
 		return err
 	}

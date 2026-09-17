@@ -24,20 +24,25 @@ func TestMenusFluxoCompletoTCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancelar := context.WithCancel(context.Background())
-	fim := make(chan error, 1)
+	fim := make(chan error, 1) // cria um canal para receber o resultado do servidor
+	// inicia o servidor em uma goroutine separada
 	go func() { fim <- servidor.Servir(ctx, listener, servidor.NovoGrafo(), time.Second) }()
+	// garante que o servidor seja encerrado e que o resultado seja verificado
 	defer func() {
 		cancelar()
 		if err := <-fim; err != nil {
 			t.Error(err)
 		}
 	}()
+	// função auxiliar para executar o menu com entradas simuladas e verificar saídas esperadas
 	executar := func(perfil, entrada string, esperados ...string) {
-		t.Helper()
+		t.Helper() // marca a função como auxiliar para melhorar a saída de erros
 		var saida bytes.Buffer
+		// executa o menu com as entradas simuladas e verifica se a saída contém os textos esperados
 		if err := cliente.ExecutarMenu(listener.Addr().String(), perfil, strings.NewReader(entrada), &saida); err != nil {
 			t.Fatal(err)
 		}
+		// verifica se cada texto esperado está presente na saída
 		for _, esperado := range esperados {
 			if !strings.Contains(saida.String(), esperado) {
 				t.Fatalf("não encontrou %q:\n%s", esperado, saida.String())
@@ -57,6 +62,7 @@ func TestMenusFluxoCompletoTCP(t *testing.T) {
 // TestMenuEntradaInvalidaEEncerramento: Simula EOF e opcoes invalidas e verifica o encerramento do
 // menu sem falha.
 func TestMenuEntradaInvalidaEEncerramento(t *testing.T) {
+	// testa entradas inválidas e EOF para ambos os perfis
 	for _, entrada := range []string{"", "abc\n9\n0\n", "2\nNome\n"} {
 		var saida bytes.Buffer
 		if err := cliente.ExecutarMenu("127.0.0.1:1", protocolo.Passageiro, strings.NewReader(entrada), &saida); err != nil {

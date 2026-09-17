@@ -11,7 +11,7 @@ package configuracao
  * Outra opcao e usar -servidor IP:8080 ou VAIJUNTO_SERVIDOR, sem editar o codigo.
  * Um IP atribuido pelo roteador pode mudar ao trocar de rede ou reconectar a maquina.
  */
-const ServidorPadrao = "192.168.0.67:8080"
+const ServidorPadrao = "192.168.1.5:8080"
 
 /* EscutaPadrao: porta onde o servidor aceita conexoes em todas as interfaces locais.
  * Nao coloque o IP da maquina hospedeira aqui para executar dentro do Docker: esse IP
