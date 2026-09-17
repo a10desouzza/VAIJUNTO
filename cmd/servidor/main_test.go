@@ -73,11 +73,11 @@ func TestSocketNDJSON(t *testing.T) {
 	}
 }
 
-// TestTimeoutETamanho: Simula conexao ociosa, mensagem grande demais e linha incompleta,
+// TestTimeoutETamanho: Simula conexao ociosa e mensagem no limite do buffer,
 // verificando o encerramento do atendimento.
 func TestTimeoutETamanho(t *testing.T) {
-	// Executa mesmo teste para 3 casos
-	for _, caso := range []string{"ocioso", "excesso", "incompleta"} {
+	// Executa o mesmo teste para os dois casos; linha incompleta e validada em internal/servidor.
+	for _, caso := range []string{"ocioso", "excesso"} {
 		//cria um subteste com o nome do caso atual
 		t.Run(caso, func(t *testing.T) {
 			// cria duas portas de uma conexao
@@ -105,11 +105,6 @@ func TestTimeoutETamanho(t *testing.T) {
 				if err != nil || !strings.Contains(linha, "ERRO") {
 					t.Fatalf("limite: %q %v", linha, err)
 				}
-			case "incompleta":
-				//envia apeas o comeco do JSON
-				clienteConn.Write([]byte(`{"acao":`))
-				//fecha conexao antes de completar mensagem
-				clienteConn.Close()
 			}
 			select {
 			// se fim foi fechado / servidor terminou atendmento corretamente

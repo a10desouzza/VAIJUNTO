@@ -83,7 +83,9 @@ func TestAtenderConexaoIgnoraLinhaIncompleta(t *testing.T) {
 		close(concluido)
 	}()
 
+	// Envia o cadastro sem a quebra de linha que completa a mensagem do protocolo.
 	io.WriteString(cliente, `{"acao":"CADASTRAR","dados":{"nome":"Ana Teste","email":"ana@teste.com","senha":"senha1234","perfil":"PASSAGEIRO"}}`)
+	// Fecha a conexao antes de completar a mensagem.
 	cliente.Close()
 	<-concluido
 	if len(g.usuarios) != 0 {

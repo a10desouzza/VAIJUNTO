@@ -34,6 +34,7 @@ func EnviarRequisicao(endereco string, req protocolo.Requisicao) (*protocolo.Res
 	if err != nil {
 		return nil, err
 	}
+	// Fechar a conexao ao sair da funcao, mesmo que haja erro.
 	defer conn.Close()
 	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
 		return nil, err

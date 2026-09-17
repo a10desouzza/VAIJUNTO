@@ -114,45 +114,19 @@ func TestBuscarValidaParametrosAntesDeExplorarOGrafo(t *testing.T) {
 	}
 }
 
-func TestCancelarReservaValidaDonoHorarioEIdempotencia(t *testing.T) {
-	t.Run("dono e repetição", func(t *testing.T) {
-		c := criarCenario(t)
-		reserva := c.reservar(t)
-		if _, err := c.g.CancelarReserva(c.outro, reserva.ID); err == nil {
-			t.Fatal("outro passageiro cancelou a reserva")
-		}
-		cancelada, err := c.g.CancelarReserva(c.p, reserva.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cancelada.Status != protocolo.Cancelada || cancelada.Motivo == "" || cancelada.CanceladaEm == "" {
-			t.Fatalf("reserva cancelada incompleta: %+v", cancelada)
-		}
-		for i := 0; i < 2; i++ {
-			repetida, err := c.g.CancelarReserva(c.p, reserva.ID)
-			if err != nil || repetida.ID != reserva.ID {
-				t.Fatalf("repetição %d: reserva=%+v erro=%v", i, repetida, err)
-			}
-		}
-		for _, assento := range reserva.Assentos {
-			if obtido := c.g.trechos[assento.Trecho.ID].Assentos; obtido != 2 {
-				t.Fatalf("assentos após repetição = %d; esperado 2", obtido)
-			}
-		}
-	})
-
-	t.Run("viagem iniciada", func(t *testing.T) {
-		c := criarCenario(t)
-		reserva := c.reservar(t)
-		c.agora = partida(reserva.Assentos[0].Trecho)
-		c.reautenticar(t)
-		if _, err := c.g.CancelarReserva(c.p, reserva.ID); err == nil {
-			t.Fatal("reserva iniciada foi cancelada")
-		}
-		if c.g.reservas[reserva.ID].Status != protocolo.Ativa {
-			t.Fatal("tentativa recusada alterou a reserva")
-		}
-	})
+// TestCancelarReservaIniciada: recebe o teste e avanca o relogio ate a partida da reserva.
+// Confere que o cancelamento e recusado e a reserva permanece ativa. Sem retorno.
+func TestCancelarReservaIniciada(t *testing.T) {
+	c := criarCenario(t)
+	reserva := c.reservar(t)
+	c.agora = partida(reserva.Assentos[0].Trecho)
+	c.reautenticar(t)
+	if _, err := c.g.CancelarReserva(c.p, reserva.ID); err == nil {
+		t.Fatal("reserva iniciada foi cancelada")
+	}
+	if c.g.reservas[reserva.ID].Status != protocolo.Ativa {
+		t.Fatal("tentativa recusada alterou a reserva")
+	}
 }
 
 func TestPrecoPorTrechoValidacaoESoma(t *testing.T) {

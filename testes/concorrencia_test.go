@@ -99,8 +99,13 @@ func TestIdempotenciaECancelamento(t *testing.T) {
 		t.Fatal("terceiro cancelou reserva")
 	}
 	for i := 0; i < 2; i++ {
-		if _, err := a.g.CancelarReserva(a.passageiro, r.ID); err != nil {
+		cancelada, err := a.g.CancelarReserva(a.passageiro, r.ID)
+		if err != nil {
 			t.Fatal(err)
+		}
+		// A repeticao deve devolver a mesma reserva com todos os dados do cancelamento.
+		if cancelada.ID != r.ID || cancelada.Status != protocolo.Cancelada || cancelada.Motivo == "" || cancelada.CanceladaEm == "" {
+			t.Fatalf("cancelamento incompleto ou inconsistente: %+v", cancelada)
 		}
 	}
 	caronas, _ := a.g.ConsultarCaronas(a.motorista)

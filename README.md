@@ -6,19 +6,18 @@ O VaiJunto permite que motoristas ofereçam caronas e passageiros reservem viage
 
 ## Sumário
 
-- [Especificações da aplicação](#especificações-da-aplicação)
-- [Estrutura do projeto](#estrutura-do-projeto)
-- [Como o sistema funciona](#como-o-sistema-funciona)
-- [Teste em computadores distintos](#teste-em-computadores-distintos)
-- [Manual de uso](#manual-de-uso)
+- [Sobre o projeto](#sobre-o-projeto)
+- [Executar com Go](#executar-com-go)
 - [Execução com Docker](#execução-com-docker)
 - [Acesso por outro computador](#acesso-por-outro-computador)
 - [Exemplo de utilização](#exemplo-de-utilização)
+- [Como o sistema funciona](#como-o-sistema-funciona)
+- [Estrutura do projeto](#estrutura-do-projeto)
 - [Testes automatizados](#testes-automatizados)
 - [Protocolo de comunicação](#protocolo-de-comunicação)
 - [Problemas comuns](#problemas-comuns)
 
-## Especificações da aplicação
+## Sobre o projeto
 
 A aplicação usa Go e sua biblioteca padrão. A comunicação acontece por sockets TCP, com mensagens JSON delimitadas por quebra de linha (NDJSON). Não são usados HTTP, REST, RPC, gRPC ou bancos de dados externos.
 
@@ -41,60 +40,7 @@ As vagas são controladas por trecho. O passageiro não escolhe um número de as
 
 > **Estado em memória:** encerrar ou reiniciar o servidor apaga cadastros, sessões, caronas, reservas e notificações. Fechar apenas um cliente não apaga esses dados.
 
-## Estrutura do projeto
-
-| Pasta ou arquivo | Conteúdo |
-| :--- | :--- |
-| `cmd/servidor` | Inicialização do servidor TCP |
-| `cmd/cliente_motorista` | Inicialização do cliente motorista |
-| `cmd/cliente_passageiro` | Inicialização do cliente passageiro |
-| `cmd/carga` | Programa para simular vários clientes concorrentes |
-| `internal/servidor` | Grafo, reservas, autenticação, roteamento e atendimento TCP |
-| `internal/cliente` | Menus, entrada de dados e comunicação dos clientes |
-| `internal/configuracao/rede.go` | Endereços padrão de cliente e servidor |
-| `internal/protocolo` | Estruturas, validações e documentação do protocolo |
-| `internal/carga` | Execução e medição do teste de carga |
-| `testes` | Testes de integração, concorrência e falhas |
-| `Dockerfile` | Testes, compilação e montagem da imagem |
-| `compose.yaml` | Serviços e publicação da porta do servidor |
-
-## Como o sistema funciona
-
-### TCP e separação de responsabilidades
-
-O TCP fornece entrega ordenada de bytes, mas não delimita mensagens. Por isso cada objeto JSON termina com uma quebra de linha. O protocolo define as estruturas; o transporte cuida dos sockets e prazos; o roteador valida as mensagens; o gerenciador aplica as regras; os clientes apresentam os menus. Não há chamadas HTTP/RPC nem acesso direto dos clientes ao estado.
-
-O servidor atende cada conexão em uma goroutine, até 256 conexões simultâneas. Mensagens da mesma conexão são sequenciais. O prazo de leitura/escrita evita que conexões ociosas ocupem recursos indefinidamente; ele não é um limite de duração do algoritmo de busca. As travas do estado são liberadas antes do envio da resposta pela rede.
-
-### Reserva atômica e escolha da trava global
-
-O estado compartilhado usa um único `sync.RWMutex`. Na confirmação, o servidor adquire a trava exclusiva, valida **todos** os trechos e escolhe as vagas antes de modificar qualquer um deles. Somente após todas as verificações registra a reserva e ocupa as vagas. Uma falha de validação deixa todos os trechos intactos. Cancelamentos e devoluções de vagas também acontecem sob essa trava.
-
-Essa escolha simplifica a consistência entre caronas, reservas, vagas e notificações e evita ciclos de aquisição de travas por trecho. O custo é serializar alterações mesmo em rotas independentes; não é uma solução de máxima escalabilidade nem oferece ordem de atendimento FIFO. Uma alternativa futura seria usar travas por recurso em ordem fixa, com maior complexidade para reservas que atravessam várias caronas.
-
-Consultas usam a trava de leitura. A busca copia os trechos disponíveis sob essa trava e explora a cópia depois de liberá-la. Assim, uma busca não bloqueia alterações durante toda a exploração, mas seu resultado pode ficar desatualizado: a confirmação sempre revalida as vagas. Buscar não significa reservar.
-
-### Multigrafo e busca limitada
-
-Cada cidade é um vértice e cada trecho publicado é uma aresta direcionada independente. Isso preserva ofertas paralelas de vários motoristas. A busca em profundidade (DFS) combina arestas respeitando vagas, cidades, horários e ausência de ciclos; não é um algoritmo de menor caminho com garantia irrestrita de ótimo.
-
-Para controlar o crescimento combinatório, a busca examina no máximo 50000 arestas, encontra até 100 itinerários e usa no máximo 12 trechos por padrão (configurável de 1 a 20). Quando a exploração é limitada, a resposta informa `limitada: true`. A ordenação pelo horário de partida do primeiro trecho vale para os caminhos encontrados; nesse caso, não garante a melhor opção entre todos os caminhos possíveis.
-
-O preço de cada trecho é escolhido pelo motorista, com até duas casas decimais; o total da reserva é somado em centavos. A duração vai da primeira partida até a chegada final, incluindo esperas nas conexões. Paradas são informadas somente nas cidades intermediárias de cada carona: a última cidade encerra o percurso e sempre tem parada zero, inclusive para ofertas recebidas de clientes antigos.
-
-### Falhas, repetição e limites da solução
-
-Publicações e confirmações usam uma chave de idempotência por usuário e operação. Se a conexão cair depois da execução, repetir os mesmos dados e a mesma chave não duplica o recurso. Isso não é persistência: reiniciar o servidor perde o estado e as chaves. Também não há replicação, tolerância à queda do servidor central ou criptografia TLS no transporte; use senhas de demonstração.
-
-Os testes automatizados verificam regras, protocolo, concorrência, atomicidade e falhas. O programa de carga cria vários passageiros simulados para disputar as mesmas vagas e apresenta confirmações, recusas, latência e integridade ao final.
-
-## Teste em computadores distintos
-
-O sistema foi testado em computadores distintos na mesma rede local. O servidor ficou disponível pelo seu endereço IP e porta TCP, enquanto os clientes motorista e passageiro se conectaram a ele a partir de outras máquinas.
-
-Essa execução confirma que a comunicação acontece pela rede usando TCP/IP, e não depende de os programas estarem no mesmo computador. As instruções para repetir a configuração estão na seção [Acesso por outro computador](#acesso-por-outro-computador).
-
-## Manual de uso
+## Executar com Go
 
 ### Requisitos
 
@@ -119,14 +65,14 @@ No primeiro terminal:
 go run ./cmd/servidor
 ```
 
-O servidor escuta na porta 8080. Mantenha o terminal aberto enquanto usa os clientes.
+O servidor escuta na porta 8080. Mantenha o terminal aberto enquanto usa os clientes. Os comandos abaixo usam `127.0.0.1` para executar os três programas no mesmo computador.
 
 ### 2. Iniciar o cliente motorista
 
 Em outro terminal:
 
 ```bash
-go run ./cmd/cliente_motorista
+go run ./cmd/cliente_motorista -servidor 127.0.0.1:8080
 ```
 
 Escolha **2 - Criar conta** e informe nome, e-mail e senha. Após o cadastro, o acesso é realizado automaticamente e o menu do motorista é exibido.
@@ -145,7 +91,7 @@ Escolha **2 - Criar conta** e informe nome, e-mail e senha. Após o cadastro, o 
 Em um terceiro terminal:
 
 ```bash
-go run ./cmd/cliente_passageiro
+go run ./cmd/cliente_passageiro -servidor 127.0.0.1:8080
 ```
 
 Crie uma conta usando outro e-mail. O acesso é realizado automaticamente e o menu do passageiro é exibido.
@@ -201,6 +147,12 @@ go run ./cmd/servidor -endereco :9000
 go run ./cmd/cliente_motorista -servidor 127.0.0.1:9000
 go run ./cmd/cliente_passageiro -servidor 127.0.0.1:9000
 ```
+
+### Sessões e registros do servidor
+
+A sessão vale **15 minutos a partir do login**, sem renovação por atividade. Depois disso, entre novamente. Reservas e caronas permanecem cadastradas. O terminal do servidor mostra o e-mail e perfil de quem entrou, quem saiu pelo menu e quem teve a sessão expirada. A limpeza periódica registra expirações mesmo sem novas requisições, em até aproximadamente um segundo.
+
+O servidor registra `CONECTOU` ao autenticar o usuário e `DESCONECTOU` ao encerrar a sessão pelo cliente (inclusive pela opção **0 - Sair**) ou ao expirar os 15 minutos, informando o motivo. As conexões TCP de cada operação não geram mensagens no terminal. Fechar um socket não encerra a sessão. Se o cliente for fechado abruptamente, a sessão permanece até expirar. Senhas e identificadores de sessão não são registrados. Para acompanhar no Docker: `docker compose logs -f servidor`.
 
 ## Execução com Docker
 
@@ -314,6 +266,8 @@ Clientes externos devem então usar `IP_DO_SERVIDOR:9000`. Dentro da rede Compos
 
 Use um único computador como servidor central. Os demais computadores executam apenas os clientes.
 
+O sistema foi testado em computadores distintos na mesma rede local, com os clientes acessando o servidor pelo IP e pela porta TCP da máquina.
+
 ### Computador 1: servidor
 
 Com o projeto atualizado:
@@ -422,12 +376,6 @@ go run ./cmd/cliente_passageiro -servidor ladica01:8080
 
 Ajuste a pasta para onde copiou o projeto. Se os nomes não forem resolvidos pela rede, use os IPs correspondentes. Também é possível abrir várias conexões `ssh usuario@ladica01` em terminais diferentes e executar os clientes com `-servidor 127.0.0.1:8080`; nesse caso, todos os programas rodam na mesma máquina remota. Use `exit` para encerrar cada acesso SSH.
 
-### Sessões e registros do servidor
-
-A sessão vale **15 minutos a partir do login**, sem renovação por atividade. Depois disso, entre novamente. Reservas e caronas permanecem cadastradas. O terminal do servidor mostra o e-mail e perfil de quem entrou, quem saiu pelo menu e quem teve a sessão expirada. A limpeza periódica registra expirações mesmo sem novas requisições, em até aproximadamente um segundo.
-
-O servidor registra `CONECTOU` ao autenticar o usuário e `DESCONECTOU` ao encerrar a sessão pelo cliente (inclusive pela opção **0 - Sair**) ou ao expirar os 15 minutos, informando o motivo. As conexões TCP de cada operação não geram mensagens no terminal. Fechar um socket não encerra a sessão. Se o cliente for fechado abruptamente, a sessão permanece até expirar. Senhas e identificadores de sessão não são registrados. Para acompanhar no Docker: `docker compose logs -f servidor`.
-
 ## Exemplo de utilização
 
 Cadastre dois motoristas com e-mails diferentes e um passageiro. Use a mesma data futura nas duas ofertas.
@@ -460,7 +408,56 @@ Uma carona Serrinha → Feira de Santana → Salvador sai de Serrinha às 08:00.
 
 A busca é única e apresenta os itinerários em ordem crescente do horário de partida do primeiro trecho. A confirmação verifica novamente o horário e as vagas de todos os trechos.
 
+## Como o sistema funciona
+
+### TCP e separação de responsabilidades
+
+O TCP fornece entrega ordenada de bytes, mas não delimita mensagens. Por isso cada objeto JSON termina com uma quebra de linha. O protocolo define as estruturas; o transporte cuida dos sockets e prazos; o roteador valida as mensagens; o gerenciador aplica as regras; os clientes apresentam os menus. Não há chamadas HTTP/RPC nem acesso direto dos clientes ao estado.
+
+O servidor atende cada conexão em uma goroutine, até 256 conexões simultâneas. Mensagens da mesma conexão são sequenciais. O prazo de leitura/escrita evita que conexões ociosas ocupem recursos indefinidamente; ele não é um limite de duração do algoritmo de busca. As travas do estado são liberadas antes do envio da resposta pela rede.
+
+### Reservas e concorrência
+
+O estado compartilhado usa um único `sync.RWMutex`. Na confirmação, o servidor adquire a trava exclusiva, valida **todos** os trechos e escolhe as vagas antes de modificar qualquer um deles. Somente após todas as verificações registra a reserva e ocupa as vagas. Uma falha de validação deixa todos os trechos intactos. Cancelamentos e devoluções de vagas também acontecem sob essa trava.
+
+A trava global mantém caronas, reservas, vagas e notificações consistentes. As alterações são executadas uma por vez, inclusive em rotas independentes. A ordem de aquisição da trava não garante atendimento por ordem de chegada.
+
+Consultas usam a trava de leitura. A busca copia os trechos disponíveis sob essa trava e explora a cópia depois de liberá-la. Assim, uma busca não bloqueia alterações durante toda a exploração, mas seu resultado pode ficar desatualizado: a confirmação sempre revalida as vagas. Buscar não significa reservar.
+
+### Busca de itinerários
+
+Cada cidade é um vértice e cada trecho publicado é uma aresta direcionada independente. Isso preserva ofertas paralelas de vários motoristas. A busca em profundidade (DFS) combina trechos respeitando vagas, cidades e horários, sem repetir cidades no mesmo caminho.
+
+Para controlar o crescimento combinatório, a busca examina no máximo 50000 arestas, encontra até 100 itinerários e usa no máximo 12 trechos por padrão (configurável de 1 a 20). Quando a exploração é limitada, a resposta informa `limitada: true`. A ordenação pelo horário de partida do primeiro trecho vale para os caminhos encontrados; nesse caso, não garante a melhor opção entre todos os caminhos possíveis.
+
+O preço de cada trecho é escolhido pelo motorista, com até duas casas decimais; o total da reserva é somado em centavos. A duração vai da primeira partida até a chegada final, incluindo esperas nas conexões. Paradas são informadas somente nas cidades intermediárias de cada carona: a última cidade encerra o percurso e sempre tem parada zero, inclusive para ofertas recebidas de clientes antigos.
+
+### Falhas de comunicação
+
+Publicações e confirmações usam uma chave de idempotência por usuário e operação. Se a conexão cair depois da execução, repetir os mesmos dados e a mesma chave não duplica o recurso. Isso não é persistência: reiniciar o servidor perde o estado e as chaves. Também não há replicação, tolerância à queda do servidor central ou criptografia TLS no transporte; use senhas de demonstração.
+
+Os testes automatizados verificam regras, protocolo, concorrência, atomicidade e falhas. O programa de carga cria vários passageiros simulados para disputar as mesmas vagas e apresenta confirmações, recusas, latência e integridade ao final.
+
+## Estrutura do projeto
+
+| Pasta ou arquivo | Conteúdo |
+| :--- | :--- |
+| `cmd/servidor` | Inicialização do servidor TCP |
+| `cmd/cliente_motorista` | Inicialização do cliente motorista |
+| `cmd/cliente_passageiro` | Inicialização do cliente passageiro |
+| `cmd/carga` | Programa para simular vários clientes concorrentes |
+| `internal/servidor` | Grafo, reservas, autenticação, roteamento e atendimento TCP |
+| `internal/cliente` | Menus, entrada de dados e comunicação dos clientes |
+| `internal/configuracao/rede.go` | Endereços padrão de cliente e servidor |
+| `internal/protocolo` | Estruturas, validações e documentação do protocolo |
+| `internal/carga` | Execução e medição do teste de carga |
+| `testes` | Testes de integração, concorrência e falhas |
+| `Dockerfile` | Testes, compilação e montagem da imagem |
+| `compose.yaml` | Serviços e publicação da porta do servidor |
+
 ## Testes automatizados
+
+A suíte verifica validação de dados, autenticação, busca, reservas, cancelamentos, concorrência e falhas de comunicação. Também inclui o fluxo completo dos menus pelo TCP.
 
 Os testes criam seus próprios servidores e dados; não é necessário iniciar o servidor manualmente.
 
@@ -491,16 +488,6 @@ Teste pelo Docker, sem cache:
 docker build --no-cache --target testes -t vaijunto:testes .
 ```
 
-### Demonstrar as novas regras
-
-```bash
-go test -count=1 -v ./internal/servidor -run 'Test(ReservaSerrinha|BuscaOrdena|PrecoPorTrecho|SessaoQuinze|LogDesconexao)'
-go test -count=1 -v ./internal/cliente -run TestMenusFluxoCompletoTCP
-go test -count=1 -v ./internal/servidor -run TestCancelamentoMotoristaDoisRespeitaInicioDoItinerario
-```
-
-Esses testes cobrem a reserva durante os 60 minutos de viagem e os 10 de parada, o bloqueio no instante da partida, falta de vagas, atomicidade, ordenação por horário com fusos diferentes, preços independentes da distância, soma em centavos, validade exata de 15 minutos e logs sem senhas ou tokens. O teste dos menus percorre cadastro, publicação, busca, reserva e cancelamento pelo TCP.
-
 ### Teste de carga
 
 O teste de carga precisa de um servidor ativo. Ele cria usuários e duas ofertas conectadas para simular a disputa pelas vagas.
@@ -508,7 +495,7 @@ O teste de carga precisa de um servidor ativo. Ele cria usuários e duas ofertas
 Execução local:
 
 ```bash
-go run ./cmd/carga -clientes 100 -vagas 5
+go run ./cmd/carga -servidor 127.0.0.1:8080 -clientes 100 -vagas 5
 ```
 
 Servidor em outro computador:
@@ -555,4 +542,4 @@ O identificador da sessão é administrado internamente pelo cliente e não prec
 | Dados desapareceram | O servidor foi encerrado ou reiniciado; o estado fica somente em RAM |
 | Chave repetida com dados diferentes | Use uma nova chave para uma nova operação |
 
-Para uma demonstração distribuída, mantenha somente um servidor ativo e use a mesma versão do projeto em todos os computadores.
+Mantenha somente um servidor ativo e use a mesma versão do projeto em todos os computadores.
