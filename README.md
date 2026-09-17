@@ -8,7 +8,8 @@ O VaiJunto permite que motoristas ofereçam caronas e passageiros reservem viage
 
 - [Especificações da aplicação](#especificações-da-aplicação)
 - [Estrutura do projeto](#estrutura-do-projeto)
-- [Decisões técnicas para apresentação](#decisões-técnicas-para-apresentação)
+- [Como o sistema funciona](#como-o-sistema-funciona)
+- [Teste em computadores distintos](#teste-em-computadores-distintos)
 - [Manual de uso](#manual-de-uso)
 - [Execução com Docker](#execução-com-docker)
 - [Acesso por outro computador](#acesso-por-outro-computador)
@@ -34,7 +35,7 @@ flowchart LR
     S --- E[Estado em RAM protegido por RWMutex]
 ```
 
-As cidades são vértices de um multigrafo direcionado, e os trechos são suas arestas. Duas ofertas com a mesma rota possuem IDs e disponibilidades independentes. O motorista informa o valor por quilômetro e a distância de cada trecho, e o servidor calcula o preço.
+As cidades são vértices de um multigrafo direcionado, e os trechos são suas arestas. Duas ofertas com a mesma rota possuem IDs e disponibilidades independentes. O motorista escolhe diretamente o preço por passageiro de cada trecho. A distância continua sendo informada, mas não determina o preço.
 
 As vagas são controladas por trecho. O passageiro não escolhe um número de assento; a atribuição é automática. A reserva é atômica: todos os trechos são confirmados juntos ou nenhum é reservado. O servidor usa `sync.RWMutex` para proteger consultas e alterações do estado.
 
@@ -57,7 +58,7 @@ As vagas são controladas por trecho. O passageiro não escolhe um número de as
 | `Dockerfile` | Testes, compilação e montagem da imagem |
 | `compose.yaml` | Serviços e publicação da porta do servidor |
 
-## Decisões técnicas para apresentação
+## Como o sistema funciona
 
 ### TCP e separação de responsabilidades
 
@@ -77,15 +78,21 @@ Consultas usam a trava de leitura. A busca copia os trechos disponíveis sob ess
 
 Cada cidade é um vértice e cada trecho publicado é uma aresta direcionada independente. Isso preserva ofertas paralelas de vários motoristas. A busca em profundidade (DFS) combina arestas respeitando vagas, cidades, horários e ausência de ciclos; não é um algoritmo de menor caminho com garantia irrestrita de ótimo.
 
-Para controlar o crescimento combinatório, a busca examina no máximo 50000 arestas, encontra até 100 itinerários e usa no máximo 12 trechos por padrão (configurável de 1 a 20). Quando a exploração é limitada, a resposta informa `limitada: true`. A ordenação por preço, tempo ou quantidade de trechos vale para os caminhos encontrados; nesse caso, não garante a melhor opção entre todos os caminhos possíveis.
+Para controlar o crescimento combinatório, a busca examina no máximo 50000 arestas, encontra até 100 itinerários e usa no máximo 12 trechos por padrão (configurável de 1 a 20). Quando a exploração é limitada, a resposta informa `limitada: true`. A ordenação pelo horário de partida do primeiro trecho vale para os caminhos encontrados; nesse caso, não garante a melhor opção entre todos os caminhos possíveis.
 
-O preço permanece calculado por quilômetro, com arredondamento para centavos. A duração vai da primeira partida até a chegada final, incluindo esperas nas conexões. Paradas são informadas somente nas cidades intermediárias de cada carona: a última cidade encerra o percurso e sempre tem parada zero, inclusive para ofertas recebidas de clientes antigos.
+O preço de cada trecho é escolhido pelo motorista, com até duas casas decimais; o total da reserva é somado em centavos. A duração vai da primeira partida até a chegada final, incluindo esperas nas conexões. Paradas são informadas somente nas cidades intermediárias de cada carona: a última cidade encerra o percurso e sempre tem parada zero, inclusive para ofertas recebidas de clientes antigos.
 
 ### Falhas, repetição e limites da solução
 
 Publicações e confirmações usam uma chave de idempotência por usuário e operação. Se a conexão cair depois da execução, repetir os mesmos dados e a mesma chave não duplica o recurso. Isso não é persistência: reiniciar o servidor perde o estado e as chaves. Também não há replicação, tolerância à queda do servidor central ou criptografia TLS no transporte; use senhas de demonstração.
 
-Os testes automatizados verificam regras, protocolo, concorrência, atomicidade e falhas. O detector `-race` ajuda a identificar acessos concorrentes incorretos nos caminhos executados, mas não prova sozinho ausência de todas as falhas. O programa de carga mede confirmações concorrentes e integridade; a demonstração em máquinas físicas distintas deve ser realizada separadamente, conforme o manual abaixo.
+Os testes automatizados verificam regras, protocolo, concorrência, atomicidade e falhas. O programa de carga cria vários passageiros simulados para disputar as mesmas vagas e apresenta confirmações, recusas, latência e integridade ao final.
+
+## Teste em computadores distintos
+
+O sistema foi testado em computadores distintos na mesma rede local. O servidor ficou disponível pelo seu endereço IP e porta TCP, enquanto os clientes motorista e passageiro se conectaram a ele a partir de outras máquinas.
+
+Essa execução confirma que a comunicação acontece pela rede usando TCP/IP, e não depende de os programas estarem no mesmo computador. As instruções para repetir a configuração estão na seção [Acesso por outro computador](#acesso-por-outro-computador).
 
 ## Manual de uso
 
@@ -161,6 +168,7 @@ Crie uma conta usando outro e-mail. O acesso é realizado automaticamente e o me
 - Digite `/voltar` em um formulário para retornar ao menu.
 - O passageiro pode cancelar sua reserva antes do início do itinerário.
 - O motorista não pode cancelar uma carona ou trecho após o início da carona.
+- Em A → B → C com dois motoristas, o motorista de B → C também não pode cancelar sua carona ou trecho a partir do início de A → B. Se cancelar antes desse início, a reserva inteira A → B → C é cancelada, as vagas de ambos os trechos são devolvidas e o passageiro recebe uma notificação. A oferta A → B do primeiro motorista continua disponível para outras reservas.
 - Cancelamentos feitos pelo motorista cancelam por inteiro as reservas afetadas e devolvem suas vagas.
 - As notificações são consultadas no menu do passageiro; não há envio espontâneo do servidor.
 
@@ -171,7 +179,7 @@ Para encerrar, escolha **0 - Sair** nos clientes e pressione `Ctrl+C` no termina
 O endereço padrão está em [internal/configuracao/rede.go](internal/configuracao/rede.go):
 
 ```go
-const ServidorPadrao = "192.168.1.5:8080"
+const ServidorPadrao = "192.168.0.67:8080"
 const EscutaPadrao = ":8080"
 ```
 
@@ -381,6 +389,45 @@ Test-NetConnection 192.168.1.10 -Port 8080
 
 O campo `TcpTestSucceeded` deve ser `True`.
 
+### Acessar vários computadores por SSH
+
+Com o serviço SSH habilitado nas máquinas do laboratório e uma conta válida, abra um terminal separado para cada acesso. Substitua `usuario` pelo seu login e ajuste os nomes das máquinas:
+
+```bash
+ssh usuario@ladica01
+```
+
+No computador `ladica01`, entre na pasta do projeto e mantenha o servidor aberto:
+
+```bash
+cd ~/VAIJUNTO-main
+go run ./cmd/servidor -endereco :8080
+```
+
+Em outro terminal, conecte-se ao segundo computador e execute o motorista apontando para o servidor central:
+
+```bash
+ssh usuario@ladica02
+cd ~/VAIJUNTO-main
+go run ./cmd/cliente_motorista -servidor ladica01:8080
+```
+
+Em um terceiro terminal, execute o passageiro em outra máquina:
+
+```bash
+ssh usuario@ladica03
+cd ~/VAIJUNTO-main
+go run ./cmd/cliente_passageiro -servidor ladica01:8080
+```
+
+Ajuste a pasta para onde copiou o projeto. Se os nomes não forem resolvidos pela rede, use os IPs correspondentes. Também é possível abrir várias conexões `ssh usuario@ladica01` em terminais diferentes e executar os clientes com `-servidor 127.0.0.1:8080`; nesse caso, todos os programas rodam na mesma máquina remota. Use `exit` para encerrar cada acesso SSH.
+
+### Sessões e registros do servidor
+
+A sessão vale **15 minutos a partir do login**, sem renovação por atividade. Depois disso, entre novamente. Reservas e caronas permanecem cadastradas. O terminal do servidor mostra o e-mail e perfil de quem entrou, quem saiu pelo menu e quem teve a sessão expirada. A limpeza periódica registra expirações mesmo sem novas requisições, em até aproximadamente um segundo.
+
+O servidor registra `CONECTOU` ao autenticar o usuário e `DESCONECTOU` ao encerrar a sessão pelo cliente (inclusive pela opção **0 - Sair**) ou ao expirar os 15 minutos, informando o motivo. As conexões TCP de cada operação não geram mensagens no terminal. Fechar um socket não encerra a sessão. Se o cliente for fechado abruptamente, a sessão permanece até expirar. Senhas e identificadores de sessão não são registrados. Para acompanhar no Docker: `docker compose logs -f servidor`.
+
 ## Exemplo de utilização
 
 Cadastre dois motoristas com e-mails diferentes e um passageiro. Use a mesma data futura nas duas ofertas.
@@ -390,11 +437,10 @@ Cadastre dois motoristas com e-mails diferentes e um passageiro. Use a mesma dat
 | Rota | Salvador → Feira de Santana | Feira de Santana → Serrinha |
 | Partida | 08:00 | 10:30 |
 | Vagas | 2 | 2 |
-| Valor por km | R$ 0,50 | R$ 0,50 |
 | Distância | 100 km | 80 km |
 | Tempo de viagem | 120 minutos | 60 minutos |
 | Parada | Não se aplica: destino final | Não se aplica: destino final |
-| Preço calculado | R$ 50,00 | R$ 40,00 |
+| Preço escolhido por trecho | R$ 50,00 | R$ 40,00 |
 
 1. Publique as duas caronas nos respectivos clientes motorista.
 2. No passageiro, busque Salvador → Serrinha na data escolhida.
@@ -407,6 +453,12 @@ Cadastre dois motoristas com e-mails diferentes e um passageiro. Use a mesma dat
 A primeira carona chega às 10:00 e a segunda sai às 10:30: os 30 minutos são espera pela conexão, não uma parada obrigatória no destino da primeira carona. A duração total é de 3h30.
 
 Se a busca não apresentar o itinerário, confira data, horários, vagas e se a partida ainda está no futuro.
+
+### Reservar enquanto o motorista está viajando
+
+Uma carona Serrinha → Feira de Santana → Salvador sai de Serrinha às 08:00. Com 60 minutos de viagem e 10 minutos de parada em Feira, o trecho Feira → Salvador sai às 09:10. Ele pode ser encontrado e reservado durante a viagem anterior e durante a parada, até antes das 09:10, se houver vagas. Às 09:10 a reserva desse trecho é recusada. O trecho Serrinha → Feira fica indisponível para novas reservas desde as 08:00.
+
+A busca é única e apresenta os itinerários em ordem crescente do horário de partida do primeiro trecho. A confirmação verifica novamente o horário e as vagas de todos os trechos.
 
 ## Testes automatizados
 
@@ -438,6 +490,16 @@ Teste pelo Docker, sem cache:
 ```bash
 docker build --no-cache --target testes -t vaijunto:testes .
 ```
+
+### Demonstrar as novas regras
+
+```bash
+go test -count=1 -v ./internal/servidor -run 'Test(ReservaSerrinha|BuscaOrdena|PrecoPorTrecho|SessaoQuinze|LogDesconexao)'
+go test -count=1 -v ./internal/cliente -run TestMenusFluxoCompletoTCP
+go test -count=1 -v ./internal/servidor -run TestCancelamentoMotoristaDoisRespeitaInicioDoItinerario
+```
+
+Esses testes cobrem a reserva durante os 60 minutos de viagem e os 10 de parada, o bloqueio no instante da partida, falta de vagas, atomicidade, ordenação por horário com fusos diferentes, preços independentes da distância, soma em centavos, validade exata de 15 minutos e logs sem senhas ou tokens. O teste dos menus percorre cadastro, publicação, busca, reserva e cancelamento pelo TCP.
 
 ### Teste de carga
 

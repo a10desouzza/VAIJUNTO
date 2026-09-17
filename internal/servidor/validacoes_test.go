@@ -39,6 +39,8 @@ func TestAuxiliaresDeValoresCidadesEConexao(t *testing.T) {
 	}
 }
 
+// TestCadastroAutenticacaoAutorizacaoEDesconexao: recebe o teste e cria uma conta normalizada.
+// Confere senha, duplicacao, perfis, sessao desconhecida e revogacao no logout. Sem retorno.
 func TestCadastroAutenticacaoAutorizacaoEDesconexao(t *testing.T) {
 	g := NovoGrafo()
 	g.agora = func() time.Time { return time.Date(2099, 10, 1, 8, 0, 0, 0, time.UTC) }
@@ -72,8 +74,18 @@ func TestCadastroAutenticacaoAutorizacaoEDesconexao(t *testing.T) {
 	if _, err := g.ConsultarCaronas(sessao.ID); err == nil {
 		t.Fatal("passageiro autorizado como motorista")
 	}
+	if _, err := g.ConsultarCaronas("invalido"); err == nil {
+		t.Fatal("sessão inválida aceita")
+	}
+	p := protocolo.PublicacaoCarona{Chave: "sem-permissao", Rota: []string{"A", "B"}, DataHora: "2099-10-01T09:00:00Z", Assentos: 1, Trechos: []protocolo.OfertaTrecho{{Preco: 10, DistanciaKM: 10, TempoViagem: 60}}}
+	if _, err := g.Publicar(sessao.ID, p); err == nil {
+		t.Fatal("passageiro publicou")
+	}
 	if err := g.Desconectar(sessao.ID); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := g.ConsultarReservas(sessao.ID); err == nil {
+		t.Fatal("sessão revogada aceita")
 	}
 	if err := g.Desconectar(sessao.ID); err == nil {
 		t.Fatal("sessão desconectada continuou válida")
@@ -88,12 +100,14 @@ func TestBuscarValidaParametrosAntesDeExplorarOGrafo(t *testing.T) {
 		{Origem: "A", Destino: "B", Data: "01/10/2099"},
 		{Origem: "A", Destino: "B", Data: "2099-10-01", MaxTrechos: -1},
 		{Origem: "A", Destino: "B", Data: "2099-10-01", MaxTrechos: 21},
-		{Origem: "A", Destino: "B", Data: "2099-10-01", OrdenarPor: "DISTANCIA"},
 	}
 	for i, busca := range casos {
 		if _, err := c.g.Buscar(c.p, busca); err == nil {
 			t.Errorf("caso %d foi aceito: %+v", i, busca)
 		}
+	}
+	if _, err := c.g.ConsultarReservas(c.m1); err == nil {
+		t.Fatal("motorista autorizado a consultar reservas de passageiro")
 	}
 	if _, err := c.g.Buscar(c.m1, protocolo.BuscaItinerario{Origem: "A", Destino: "B", Data: "2099-10-01"}); err == nil {
 		t.Fatal("motorista autorizado a buscar como passageiro")
@@ -131,6 +145,7 @@ func TestCancelarReservaValidaDonoHorarioEIdempotencia(t *testing.T) {
 		c := criarCenario(t)
 		reserva := c.reservar(t)
 		c.agora = partida(reserva.Assentos[0].Trecho)
+		c.reautenticar(t)
 		if _, err := c.g.CancelarReserva(c.p, reserva.ID); err == nil {
 			t.Fatal("reserva iniciada foi cancelada")
 		}
@@ -138,4 +153,29 @@ func TestCancelarReservaValidaDonoHorarioEIdempotencia(t *testing.T) {
 			t.Fatal("tentativa recusada alterou a reserva")
 		}
 	})
+}
+
+func TestPrecoPorTrechoValidacaoESoma(t *testing.T) {
+	c := criarCenario(t)
+	p := protocolo.PublicacaoCarona{Chave: "precos", Rota: []string{"Serrinha", "Feira", "Salvador"}, DataHora: c.agora.Add(time.Hour).Format(time.RFC3339), Assentos: 2, Trechos: []protocolo.OfertaTrecho{{Preco: 0.10, DistanciaKM: 999, TempoViagem: 60}, {Preco: 0.20, DistanciaKM: 1, TempoViagem: 60}}}
+	for _, valor := range []float64{-1, 1.001, 1000000.01, math.NaN(), math.Inf(1)} {
+		p.Trechos[0].Preco = valor
+		if _, err := c.g.Publicar(c.m1, p); err == nil {
+			t.Fatalf("preço inválido aceito: %v", valor)
+		}
+	}
+	p.Trechos[0].Preco = 0.10
+	carona, err := c.g.Publicar(c.m1, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "soma", TrechosIDs: []string{carona.Trechos[0].Trecho.ID, carona.Trechos[1].Trecho.ID}})
+	if err != nil || r.PrecoTotal != 0.30 {
+		t.Fatalf("soma em centavos: %+v %v", r, err)
+	}
+	p.Trechos[0].Preco = 0
+	p.Chave = "gratuito"
+	if _, err := c.g.Publicar(c.m1, p); err != nil {
+		t.Fatal(err)
+	}
 }

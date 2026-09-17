@@ -1,22 +1,11 @@
-/* ================================================================================================
- * internal/servidor/regras_test.go - VaiJunto: sistema de caronas compartilhadas
- * Autor: Arthur Souza
- *
- * Testes de horario, preco, cancelamento e notificacoes.
- * O relogio do cenario permite simular o inicio do percurso sem esperar o tempo real.
- *
- * DIVISAO DE RESPONSABILIDADES:
- * Este arquivo prepara cenarios e verifica resultados. As regras exercitadas permanecem nos
- * pacotes da aplicacao.
- * ================================================================================================ */
+// internal/servidor/regras_test.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Testes de horario, preco, cancelamento e notificacoes.
+// O relogio do cenario permite simular o inicio do percurso sem esperar o tempo real.
 
 package servidor
 
 import (
-	"encoding/json"
-	"fmt"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 	"vaijunto/internal/protocolo"
@@ -33,75 +22,8 @@ type cenarioViagem struct {
 	bc    protocolo.Carona
 }
 
-func TestPublicacaoSemParadaNoDestinoFinal(t *testing.T) {
-	c := criarCenario(t)
-	for _, n := range []int{2, 3, 8, 21} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			p := protocolo.PublicacaoCarona{Chave: fmt.Sprint("final-", n), ValorKM: 2, Assentos: 2, DataHora: c.agora.Add(time.Hour).Format(time.RFC3339)}
-			for i := 0; i < n; i++ {
-				p.Rota = append(p.Rota, fmt.Sprintf("Cidade %c", 'A'+i))
-				if i < n-1 {
-					p.Trechos = append(p.Trechos, protocolo.OfertaTrecho{DistanciaKM: 10, TempoViagem: 60, TempoParada: 15})
-				}
-			}
-			carona, err := c.g.Publicar(c.m1, p)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for i, item := range carona.Trechos {
-				esperada := 15
-				if i == n-2 {
-					esperada = 0
-				}
-				if item.Trecho.TempoParada != esperada {
-					t.Fatalf("trecho %d: parada %d, esperado %d", i, item.Trecho.TempoParada, esperada)
-				}
-				hora := c.agora.Add(time.Hour + time.Duration(i*75)*time.Minute).Format(time.RFC3339)
-				if item.Trecho.DataHora != hora {
-					t.Fatalf("horário: %s, esperado %s", item.Trecho.DataHora, hora)
-				}
-			}
-			if p.Trechos[n-2].TempoParada != 15 {
-				t.Fatal("alterou entrada do chamador")
-			}
-			p.Trechos[n-2].TempoParada = 0
-			repetida, err := c.g.Publicar(c.m1, p)
-			if err != nil || repetida.ID != carona.ID {
-				t.Fatalf("repetição normalizada: %v, %s", err, repetida.ID)
-			}
-		})
-	}
-}
-
-func TestConexaoNaChegadaAoDestinoFinal(t *testing.T) {
-	c := criarCenario(t)
-	// A-B chega às 08:40: a parada de 5 enviada pelo cliente antigo é ignorada.
-	bc, err := c.g.Publicar(c.m2, protocolo.PublicacaoCarona{Chave: "conexao-imediata", Rota: []string{"B", "E"}, DataHora: c.agora.Add(40 * time.Minute).Format(time.RFC3339), Assentos: 1, ValorKM: 1, Trechos: []protocolo.OfertaTrecho{{DistanciaKM: 10, TempoViagem: 10, TempoParada: 100}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	busca, err := c.g.Buscar(c.p, protocolo.BuscaItinerario{Origem: "A", Destino: "E", Data: "2099-10-01"})
-	if err != nil || len(busca.Itinerarios) != 1 {
-		t.Fatalf("busca: %+v; %v", busca, err)
-	}
-	if busca.Itinerarios[0].DuracaoTotal != 20 {
-		t.Fatalf("duração: %d", busca.Itinerarios[0].DuracaoTotal)
-	}
-	_, err = c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "sem-espera-final", TrechosIDs: []string{c.ab.Trechos[0].Trecho.ID, bc.Trechos[0].Trecho.ID}})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-/* criarCenario
- *
- * Recebe: t: controle do teste.
- *
- * O que faz: Cria um grafo novo e injeta um relogio ajustavel. Publica A-B com um motorista e
- * B-C-D com outro.
- *
- * Retorna: Ponteiro para cenarioViagem com relogio, contas e caronas preparadas.
- */
+// criarCenario: Cria um grafo novo e injeta um relogio ajustavel. Publica A-B com um motorista e
+// B-C-D com outro. Retorna: Ponteiro para cenarioViagem com relogio, contas e caronas preparadas.
 func criarCenario(t *testing.T) *cenarioViagem {
 	t.Helper()
 	c := &cenarioViagem{g: NovoGrafo(), agora: time.Date(2099, 10, 1, 8, 0, 0, 0, time.FixedZone("Bahia", -3*3600))}
@@ -125,9 +47,9 @@ func criarCenario(t *testing.T) *cenarioViagem {
 		t.Helper()
 		ofertas := make([]protocolo.OfertaTrecho, len(rota)-1)
 		for i := range ofertas {
-			ofertas[i] = protocolo.OfertaTrecho{DistanciaKM: 10, TempoViagem: 10, TempoParada: 5}
+			ofertas[i] = protocolo.OfertaTrecho{Preco: 20, DistanciaKM: 10, TempoViagem: 10, TempoParada: 5}
 		}
-		carona, err := c.g.Publicar(sessaoID, protocolo.PublicacaoCarona{Chave: chave, Rota: rota, DataHora: c.agora.Add(time.Duration(minutos) * time.Minute).Format(time.RFC3339), ValorKM: 2, Assentos: 2, Trechos: ofertas})
+		carona, err := c.g.Publicar(sessaoID, protocolo.PublicacaoCarona{Chave: chave, Rota: rota, DataHora: c.agora.Add(time.Duration(minutos) * time.Minute).Format(time.RFC3339), Assentos: 2, Trechos: ofertas})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,14 +60,8 @@ func criarCenario(t *testing.T) *cenarioViagem {
 	return c
 }
 
-/* reservar
- *
- * Recebe: t: controle do teste; c: cenario com os dois motoristas e o passageiro.
- *
- * O que faz: Confirma o percurso formado pelo primeiro trecho de cada uma das duas caronas.
- *
- * Retorna: Reserva de A-B-C. Interrompe o teste com Fatal se a confirmacao falhar.
- */
+// reservar: Confirma o percurso formado pelo primeiro trecho de cada uma das duas caronas.
+// Retorna: Reserva de A-B-C. Interrompe o teste com Fatal se a confirmacao falhar.
 func (c *cenarioViagem) reservar(t *testing.T) protocolo.Reserva {
 	t.Helper()
 	r, err := c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "abc", TrechosIDs: []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID}})
@@ -155,259 +71,25 @@ func (c *cenarioViagem) reservar(t *testing.T) protocolo.Reserva {
 	return r
 }
 
-/* TestNaoCancelaConexaoDeItinerarioIniciado
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Avanca o relogio ate o inicio de A-B e tenta cancelar a conexao do outro motorista.
- * Confere que vagas, reserva e avisos nao mudaram.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
-func TestNaoCancelaConexaoDeItinerarioIniciado(t *testing.T) {
-	for _, tipo := range []string{"trecho", "carona"} {
-		for _, minutos := range []int{30, 31} {
-			t.Run(fmt.Sprintf("%s_%d", tipo, minutos), func(t *testing.T) {
-				c := criarCenario(t)
-				r := c.reservar(t)
-				c.agora = c.agora.Add(time.Duration(minutos) * time.Minute)
-				var err error
-				if tipo == "trecho" {
-					_, err = c.g.CancelarTrecho(c.m2, c.bc.Trechos[0].Trecho.ID)
-				} else {
-					_, err = c.g.CancelarCarona(c.m2, c.bc.ID)
-				}
-				if err == nil || !strings.Contains(err.Error(), "já iniciou o itinerário") {
-					t.Fatalf("cancelamento deveria ser bloqueado: %v", err)
-				}
-				if c.g.reservas[r.ID].Status != protocolo.Ativa {
-					t.Fatal("reserva foi alterada")
-				}
-				for _, a := range r.Assentos {
-					if c.g.trechos[a.Trecho.ID].Assentos != 1 || c.g.trechos[a.Trecho.ID].Status != protocolo.Ativa {
-						t.Fatal("vaga ou trecho alterado")
-					}
-				}
-				if c.g.caronas[c.bc.ID].status != protocolo.Ativa || len(c.g.notificacoes[r.Passageiro]) != 0 {
-					t.Fatal("cancelamento recusado teve efeito")
-				}
-			})
-		}
-	}
-}
-
-/* TestCancelamentoAntesDaPartidaENotificacoes
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Cancela antes da partida, repete a operacao e confere devolucao unica de vagas,
- * status parcial e propriedade das notificacoes.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
-func TestCancelamentoAntesDaPartidaENotificacoes(t *testing.T) {
-	c := criarCenario(t)
-	r := c.reservar(t)
-	c.agora = c.agora.Add(29*time.Minute + 59*time.Second)
-	id := c.bc.Trechos[0].Trecho.ID
-	if _, err := c.g.CancelarTrecho(c.m1, id); err == nil {
-		t.Fatal("outro motorista cancelou")
-	}
-	for i := 0; i < 2; i++ {
-		if _, err := c.g.CancelarTrecho(c.m2, id); err != nil {
+// Viagens podem durar mais que a sessao: autentica novamente apos avancar o relogio.
+func (c *cenarioViagem) reautenticar(t *testing.T) {
+	t.Helper()
+	for email, destino := range map[string]*string{"m1@teste.com": &c.m1, "m2@teste.com": &c.m2, "p@teste.com": &c.p, "outro@teste.com": &c.outro} {
+		s, err := c.g.Autenticar(protocolo.Credenciais{Email: email, Senha: "senha1234"})
+		if err != nil {
 			t.Fatal(err)
 		}
-	}
-	if c.g.reservas[r.ID].Status != protocolo.Cancelada {
-		t.Fatal("reserva não cancelada")
-	}
-	for _, a := range r.Assentos {
-		if c.g.trechos[a.Trecho.ID].Assentos != 2 {
-			t.Fatal("vaga não devolvida ou devolvida duas vezes")
-		}
-	}
-	if c.g.caronas[c.bc.ID].status != protocolo.Parcial {
-		t.Fatal("carona deveria ser parcial")
-	}
-	if c.g.trechos[c.bc.Trechos[1].Trecho.ID].Status != protocolo.Ativa {
-		t.Fatal("trecho independente cancelado")
-	}
-	avisos, err := c.g.ConsultarNotificacoes(c.p)
-	if err != nil || len(avisos) != 1 || avisos[0].ReservaID != r.ID || avisos[0].Lida {
-		t.Fatalf("notificações: %+v %v", avisos, err)
-	}
-	if err := c.g.LerNotificacao(c.outro, avisos[0].ID); err == nil {
-		t.Fatal("outro usuário leu aviso")
-	}
-	if err := c.g.LerNotificacao(c.p, avisos[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	avisos, _ = c.g.ConsultarNotificacoes(c.p)
-	if !avisos[0].Lida {
-		t.Fatal("aviso não marcado")
-	}
-	resultado, err := c.g.Buscar(c.outro, protocolo.BuscaItinerario{Origem: "C", Destino: "D", Data: "2099-10-01"})
-	if err != nil || len(resultado.Itinerarios) != 1 {
-		t.Fatalf("trecho não cancelado indisponível: %+v %v", resultado, err)
+		*destino = s.ID
 	}
 }
 
-/* TestCaronaIniciadaBloqueiaCancelamentoEReserva
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Simula carona iniciada e verifica a recusa de cancelamento e nova reserva, inclusive
- * em um trecho posterior.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
-func TestCaronaIniciadaBloqueiaCancelamentoEReserva(t *testing.T) {
-	c := criarCenario(t)
-	c.agora = c.agora.Add(50 * time.Minute)
-	if _, err := c.g.CancelarCarona(c.m2, c.bc.ID); err == nil {
-		t.Fatal("carona iniciada cancelada")
+// cancelarConexao: recebe o tipo de cancelamento e solicita ao segundo motorista que cancele
+// a carona ou seu primeiro trecho. Retorna: erro do servidor ou nil se o cancelamento ocorreu.
+func (c *cenarioViagem) cancelarConexao(tipo string) error {
+	if tipo == "trecho" {
+		_, err := c.g.CancelarTrecho(c.m2, c.bc.Trechos[0].Trecho.ID)
+		return err
 	}
-	tid := c.bc.Trechos[1].Trecho.ID
-	if _, err := c.g.CancelarTrecho(c.m2, tid); err == nil {
-		t.Fatal("trecho futuro de carona iniciada cancelado")
-	}
-	if _, err := c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "tarde", TrechosIDs: []string{tid}}); err == nil {
-		t.Fatal("reservou durante a carona")
-	}
-	resultado, err := c.g.Buscar(c.p, protocolo.BuscaItinerario{Origem: "C", Destino: "D", Data: "2099-10-01"})
-	if err != nil || len(resultado.Itinerarios) != 0 {
-		t.Fatal("busca retornou carona iniciada")
-	}
-}
-
-/* TestItinerarioIniciadoNaoBloqueiaTrechoSemRelacao
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Cancela um trecho que nao pertence ao itinerario iniciado e verifica que a reserva
- * independente permanece ativa.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
-func TestItinerarioIniciadoNaoBloqueiaTrechoSemRelacao(t *testing.T) {
-	c := criarCenario(t)
-	r := c.reservar(t)
-	c.agora = c.agora.Add(31 * time.Minute)
-	if _, err := c.g.CancelarTrecho(c.m2, c.bc.Trechos[1].Trecho.ID); err != nil {
-		t.Fatal(err)
-	}
-	if c.g.reservas[r.ID].Status != protocolo.Ativa {
-		t.Fatal("reserva independente cancelada")
-	}
-}
-
-/* TestPrecoKMEMesmaRota
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Confere o arredondamento do preco, IDs diferentes para ofertas distintas e repeticao
- * sem duplicar a publicacao.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
-func TestPrecoKMEMesmaRota(t *testing.T) {
-	c := criarCenario(t)
-	p := protocolo.PublicacaoCarona{Chave: "nova", Rota: []string{"A", "B"}, DataHora: c.ab.DataHora, ValorKM: 1.25, Assentos: 2, Trechos: []protocolo.OfertaTrecho{{DistanciaKM: 10.25, TempoViagem: 10}}}
-	a, err := c.g.Publicar(c.m1, p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.Trechos[0].Trecho.Preco != 12.81 {
-		t.Fatalf("preço incorreto: %v", a.Trechos[0].Trecho.Preco)
-	}
-	p.Chave = "outra"
-	b, err := c.g.Publicar(c.m1, p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.ID == b.ID || a.Trechos[0].Trecho.ID == b.Trechos[0].Trecho.ID {
-		t.Fatal("IDs iguais para publicações distintas")
-	}
-	repetida, err := c.g.Publicar(c.m1, p)
-	if err != nil || repetida.ID != b.ID {
-		t.Fatal("retry duplicou carona")
-	}
-	busca, err := c.g.Buscar(c.p, protocolo.BuscaItinerario{Origem: "A", Destino: "B", Data: "2099-10-01"})
-	if err != nil || len(busca.Itinerarios) != 3 {
-		t.Fatalf("arestas paralelas perdidas: %+v %v", busca, err)
-	}
-}
-
-/* TestCancelamentoEConfirmacaoConcorrentes
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Dispara confirmacoes e cancelamentos simultaneos. Ao final confere vagas devolvidas e
- * ausencia de reserva ativa no trecho cancelado.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
-func TestCancelamentoEConfirmacaoConcorrentes(t *testing.T) {
-	c := criarCenario(t)
-	inicio := make(chan struct{})
-	var wg sync.WaitGroup
-	for i := 0; i < 40; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-inicio
-			if i%2 == 0 {
-				c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: fmt.Sprint(i), TrechosIDs: []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID}})
-			} else {
-				c.g.CancelarTrecho(c.m2, c.bc.Trechos[0].Trecho.ID)
-			}
-		}()
-	}
-	close(inicio)
-	wg.Wait()
-	for _, id := range []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID} {
-		if c.g.trechos[id].Assentos != 2 || len(c.g.ocupados[id]) != 0 {
-			t.Fatal("vagas inconsistentes após disputa")
-		}
-	}
-	for _, r := range c.g.reservas {
-		if r.Status != protocolo.Cancelada {
-			t.Fatal("reserva ativa em trecho cancelado")
-		}
-	}
-}
-
-/* TestNovasAcoesTCPProtocoladas
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Monta envelopes JSON de cancelamento e consulta de avisos e os entrega ao roteador.
- * Confere respostas e estado, sem abrir um socket neste teste.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
-func TestNovasAcoesTCPProtocoladas(t *testing.T) {
-	c := criarCenario(t)
-	r := c.reservar(t)
-	tid, _ := json.Marshal(protocolo.Identificador{ID: c.bc.Trechos[0].Trecho.ID})
-	for _, req := range []protocolo.Requisicao{
-		{Acao: protocolo.AcaoCancelarTrecho, SessaoID: c.m2, Dados: tid},
-		{Acao: protocolo.AcaoNotificacoes, SessaoID: c.p, Dados: json.RawMessage(`{}`)},
-	} {
-		raw, _ := json.Marshal(req)
-		var resp protocolo.Resposta
-		if err := json.Unmarshal(ProcessarMensagem(raw, c.g), &resp); err != nil || resp.Status != protocolo.Sucesso {
-			t.Fatalf("resposta: %+v %v", resp, err)
-		}
-	}
-	if c.g.reservas[r.ID].Status != protocolo.Cancelada {
-		t.Fatal("roteador não cancelou")
-	}
+	_, err := c.g.CancelarCarona(c.m2, c.bc.ID)
+	return err
 }

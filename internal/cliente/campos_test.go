@@ -1,13 +1,6 @@
-/* ================================================================================================
- * internal/cliente/campos_test.go - VaiJunto: sistema de caronas compartilhadas
- * Autor: Arthur Souza
- *
- * Testes de campos invalidos e retorno ao menu antes do envio.
- *
- * DIVISAO DE RESPONSABILIDADES:
- * Este arquivo prepara cenarios e verifica resultados. As regras exercitadas permanecem nos
- * pacotes da aplicacao.
- * ================================================================================================ */
+// internal/cliente/campos_test.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Testes de campos invalidos e retorno ao menu antes do envio.
 
 package cliente
 
@@ -21,24 +14,30 @@ import (
 )
 
 func TestPublicarPerguntaParadaSomenteNasCidadesIntermediarias(t *testing.T) {
+	//testa 4 situacoes
 	for _, n := range []int{2, 3, 8, 21} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			var entrada strings.Builder
-			fmt.Fprintln(&entrada, n)
+		t.Run(fmt.Sprint(n), func(t *testing.T) { // cria um subteste para cada valor de n
+			var entrada strings.Builder // cria uma entrada simulada para o menu
+			fmt.Fprintln(&entrada, n)   // escreve n dentro de entrada, seguido de uma quebra de linha
+			// cria n cidades
 			for i := 0; i < n; i++ {
 				fmt.Fprintf(&entrada, "Cidade %c\n", 'A'+i)
 			}
-			fmt.Fprint(&entrada, "2099-10-01\n08:00\n3\n2\n")
+			fmt.Fprint(&entrada, "2099-10-01\n08:00\n3\n")
+			// cria n-1 trechos
 			for i := 0; i < n-1; i++ {
-				fmt.Fprint(&entrada, "10\n60\n")
-				if i < n-2 {
+				// par cd trecho, simula resposta
+				fmt.Fprint(&entrada, "10\n20\n60\n")
+				if i < n-2 { // tem que ter pelo menos 2 trechos para perguntar sobre paradas
 					fmt.Fprintln(&entrada, "15")
 				}
 			}
 			// Desiste na confirmação; não precisa de servidor nem de conexão.
 			fmt.Fprint(&entrada, "0\nproxima entrada\n")
-			var saida bytes.Buffer
+			var saida bytes.Buffer // cria uma "tela falsa", tudo que o menu mostraria sera escrito em saida
+			// cria um menu de teste
 			m := &menu{leitor: bufio.NewScanner(strings.NewReader(entrada.String())), saida: &saida}
+			//executa a publicação e verifica se houve erro
 			if err := m.publicar(); err != nil || m.err != nil {
 				t.Fatalf("publicar: %v; entrada: %v", err, m.err)
 			}
@@ -55,18 +54,11 @@ func TestPublicarPerguntaParadaSomenteNasCidadesIntermediarias(t *testing.T) {
 	}
 }
 
-/* TestCamposRepetemAteValorValido
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Fornece valores invalidos seguidos dos validos e verifica a repeticao dos campos e as
- * mensagens de erro.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
+// TestCamposRepetemAteValorValido: Fornece valores invalidos seguidos dos validos e verifica a
+// repeticao dos campos e as mensagens de erro.
 func TestCamposRepetemAteValorValido(t *testing.T) {
 	var saida bytes.Buffer
+	// cria um menu de teste com entradas invalidas e validas
 	m := &menu{leitor: bufio.NewScanner(strings.NewReader("invalido\nana@dominio\nANA@EXEMPLO.COM\n123\nSalvador\nFeira de Santana\n31/02/2026\n01/10/2099\nNaN\n1e3\n25,555\n25,50\n")), saida: &saida}
 	if email := m.email(); email != "ana@exemplo.com" {
 		t.Fatalf("email: %q", email)
@@ -90,16 +82,8 @@ func TestCamposRepetemAteValorValido(t *testing.T) {
 	}
 }
 
-/* TestVoltarAbandonaCadastroSemRede
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Interrompe o cadastro com /voltar e confere que nao houve tentativa de envio nem
- * codigos de cor na saida.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
+// TestVoltarAbandonaCadastroSemRede: Interrompe o cadastro com /voltar e confere que nao houve
+// tentativa de envio nem codigos de cor na saida.
 func TestVoltarAbandonaCadastroSemRede(t *testing.T) {
 	var saida bytes.Buffer
 	err := ExecutarMenu("127.0.0.1:1", protocolo.Passageiro, strings.NewReader("2\nAna\n/voltar\n0\n"), &saida)

@@ -1,12 +1,6 @@
-/* ================================================================================================
- * cmd/carga/main.go - VaiJunto: sistema de caronas compartilhadas
- * Autor: Arthur Souza
- *
- * Entrada do teste de carga. Os parametros e as metricas passam pelo terminal.
- *
- * DIVISAO DE RESPONSABILIDADES:
- * Este arquivo inicializa o executavel. O processamento das operacoes fica nos pacotes internal.
- * ================================================================================================ */
+// cmd/carga/main.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Entrada do teste de carga. Os parametros e as metricas passam pelo terminal.
 
 package main
 
@@ -19,21 +13,13 @@ import (
 	"vaijunto/internal/configuracao"
 )
 
-/* main
- *
- * Recebe: Nao recebe parametros Go; a configuracao e lida das flags e variaveis de ambiente do
- * processo.
- *
- * O que faz: le endereco, clientes e vagas. Imprime as metricas em JSON e encerra com erro se o
- * teste falhar.
- *
- * Retorna: Nao retorna valor. Erros fatais sao apresentados no terminal e encerram o programa.
- */
+// main: le endereco, clientes e vagas. Imprime as metricas em JSON e encerra com erro se o teste
+// falhar.
 func main() {
 	padrao := os.Getenv("VAIJUNTO_SERVIDOR") // procura variavel de ambiente
 	// se ninguem configurou usa valor padrao
 	if padrao == "" {
-		padrao = configuracao.ServidorPadrao
+		padrao = configuracao.ServidorPadrao // padrao = 192.168.1.5
 	}
 	//define 3 flags para que possa rodar o programa com variaveis de ambiente da linha de comando
 	servidor := flag.String("servidor", padrao, "IP:porta do servidor TCP")

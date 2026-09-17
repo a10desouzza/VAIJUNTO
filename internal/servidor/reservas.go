@@ -1,14 +1,7 @@
-/* ================================================================================================
- * internal/servidor/reservas.go - VaiJunto: sistema de caronas compartilhadas
- * Autor: Arthur Souza
- *
- * Confirmacao e cancelamento de reservas.
- * PONTO-CHAVE: verificar todos os trechos antes de descontar vagas, mantendo a mesma trava.
- *
- * DIVISAO DE RESPONSABILIDADES:
- * O servidor mantem o estado em RAM e valida as operacoes. As estruturas compartilhadas sao
- * protegidas por travas.
- * ================================================================================================ */
+// internal/servidor/reservas.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Confirmacao e cancelamento de reservas.
+// PONTO-CHAVE: verificar todos os trechos antes de descontar vagas, mantendo a mesma trava.
 
 package servidor
 
@@ -19,33 +12,18 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-/* copiarReserva
- *
- * Recebe: r: registro de uma reserva.
- *
- * O que faz: copia a lista de assentos para a resposta nao compartilhar seu vetor com o estado
- * interno.
- *
- * Retorna: Copia da reserva com vetor de assentos separado do original.
- */
+// copiarReserva: copia a lista de assentos para a resposta nao compartilhar seu vetor com o estado
+// interno. Retorna: Copia da reserva com vetor de assentos separado do original.
 func copiarReserva(r protocolo.Reserva) protocolo.Reserva {
 	r.Assentos = append([]protocolo.AssentoReservado(nil), r.Assentos...)
 	return r
 }
 
-/* Confirmar
- *
- * Recebe: sessaoID: sessao do passageiro; p: chave da operacao e IDs dos trechos em ordem; g: estado
- * central.
- *
- * O que faz: Adquire a trava exclusiva, autoriza a sessao e verifica repeticao. Confere todos os
- * trechos,
- * suas vagas, horarios e conexoes antes de alterar o estado. So entao ocupa uma vaga por trecho,
- * registra a reserva e a chave. O defer libera a trava antes da resposta seguir pela rede.
- *
- * Retorna: Reserva completa ou reserva existente da mesma chave; error sem descontar vagas se a
- * verificacao falhar.
- */
+// Confirmar: Adquire a trava exclusiva, autoriza a sessao e verifica repeticao. Confere todos os
+// trechos, suas vagas, horarios e conexoes antes de alterar o estado. So entao ocupa uma vaga por
+// trecho, registra a reserva e a chave. O defer libera a trava antes da resposta seguir pela rede.
+// Retorna: Reserva completa ou reserva existente da mesma chave; error sem descontar vagas se a
+// verificacao falhar.
 func (g *GrafoItinerarios) Confirmar(sessaoID string, p protocolo.ReservaItinerario) (protocolo.Reserva, error) {
 	if err := validarChave(p.Chave); err != nil {
 		return protocolo.Reserva{}, err
@@ -80,7 +58,7 @@ func (g *GrafoItinerarios) Confirmar(sessaoID string, p protocolo.ReservaItinera
 	for _, id := range p.TrechosIDs {
 		t, ok := g.trechos[id]
 		if !ok || usados[id] || !g.disponivel(t, agora) {
-			return protocolo.Reserva{}, fmt.Errorf("trecho inexistente, repetido, cancelado, sem vagas ou carona já iniciada")
+			return protocolo.Reserva{}, fmt.Errorf("trecho inexistente, repetido, cancelado, sem vagas ou trecho já iniciado")
 		}
 		usados[id] = true
 		if len(assentos) == 0 {
@@ -121,14 +99,8 @@ func (g *GrafoItinerarios) Confirmar(sessaoID string, p protocolo.ReservaItinera
 	return copiarReserva(r), nil
 }
 
-/* ConsultarReservas
- *
- * Recebe: sessaoID: sessao do passageiro; g: estado central.
- *
- * O que faz: retorna copias das reservas do passageiro autenticado.
- *
- * Retorna: Lista de copias das reservas desse passageiro, ordenada por ID, ou error de autorizacao.
- */
+// ConsultarReservas: retorna copias das reservas do passageiro autenticado. Retorna: Lista de
+// copias das reservas desse passageiro, ordenada por ID, ou error de autorizacao.
 func (g *GrafoItinerarios) ConsultarReservas(sessaoID string) ([]protocolo.Reserva, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -146,16 +118,9 @@ func (g *GrafoItinerarios) ConsultarReservas(sessaoID string) ([]protocolo.Reser
 	return resultado, nil
 }
 
-/* cancelarReserva
- *
- * Recebe: id: reserva existente; motivo: texto que sera guardado no historico; g: estado com trava
- * de escrita.
- *
- * O que faz: devolve as vagas uma unica vez e mantem o registro cancelado no historico. Auxiliar
- * interno: quem chama deve manter a trava de escrita.
- *
- * Retorna: Copia da reserva cancelada, ou do registro ja cancelado sem devolver vagas novamente.
- */
+// cancelarReserva: devolve as vagas uma unica vez e mantem o registro cancelado no historico.
+// Auxiliar interno: quem chama deve manter a trava de escrita. Retorna: Copia da reserva
+// cancelada, ou do registro ja cancelado sem devolver vagas novamente.
 func (g *GrafoItinerarios) cancelarReserva(id, motivo string) protocolo.Reserva {
 	r := g.reservas[id]
 	/* Impede que um cancelamento repetido aumente as vagas pela segunda vez. */
@@ -175,14 +140,9 @@ func (g *GrafoItinerarios) cancelarReserva(id, motivo string) protocolo.Reserva 
 	return copiarReserva(r)
 }
 
-/* CancelarReserva
- *
- * Recebe: sessaoID: sessao do passageiro; id: reserva escolhida; g: estado central.
- *
- * O que faz: confere o dono e o inicio do itinerario antes de cancelar a reserva inteira.
- *
- * Retorna: Reserva cancelada ou error se nao pertencer ao passageiro ou se o itinerario ja iniciou.
- */
+// CancelarReserva: confere o dono e o inicio do itinerario antes de cancelar a reserva inteira.
+// Retorna: Reserva cancelada ou error se nao pertencer ao passageiro ou se o itinerario ja
+// iniciou.
 func (g *GrafoItinerarios) CancelarReserva(sessaoID, id string) (protocolo.Reserva, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -200,15 +160,9 @@ func (g *GrafoItinerarios) CancelarReserva(sessaoID, id string) (protocolo.Reser
 	return g.cancelarReserva(id, "Cancelada pelo passageiro."), nil
 }
 
-/* CancelarCarona
- *
- * Recebe: sessaoID: sessao do motorista; id: carona escolhida; g: estado central.
- *
- * O que faz: valida motorista e horarios, cancela a oferta e as reservas ativas que dependem dela.
- *
- * Retorna: Carona cancelada ou error de propriedade/horario; repetir um cancelamento concluido
- * devolve a carona.
- */
+// CancelarCarona: valida motorista e horarios, cancela a oferta e as reservas ativas que dependem
+// dela. Retorna: Carona cancelada ou error de propriedade/horario; repetir um cancelamento
+// concluido devolve a carona.
 func (g *GrafoItinerarios) CancelarCarona(sessaoID, id string) (protocolo.Carona, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -237,17 +191,21 @@ func (g *GrafoItinerarios) CancelarCarona(sessaoID, id string) (protocolo.Carona
 		t.Status = protocolo.Cancelada
 		g.trechos[tid] = t
 	}
-	for rid, r := range g.reservas {
-		if r.Status != protocolo.Ativa {
-			continue
-		}
-		for _, a := range r.Assentos {
-			if a.Trecho.CaronaID == id {
-				cancelada := g.cancelarReserva(rid, "Carona "+id+" cancelada pelo motorista; itinerário inteiro cancelado.")
-				g.notificar(cancelada)
-				break
-			}
+	g.cancelarReservasDosTrechos(o.ids, "Carona "+id+" cancelada pelo motorista; itinerário inteiro cancelado.")
+	return g.consultarCarona(id), nil
+}
+
+// cancelarReservasDosTrechos exige trava exclusiva e cancelamento ja validado.
+// Coleta as reservas antes de devolver vagas, pois cancelarReserva altera ocupados.
+// Uma reserva que usa varios trechos recebe apenas um cancelamento e um aviso.
+func (g *GrafoItinerarios) cancelarReservasDosTrechos(ids []string, motivo string) {
+	reservas := make(map[string]bool)
+	for _, id := range ids {
+		for _, rid := range g.ocupados[id] {
+			reservas[rid] = true
 		}
 	}
-	return g.consultarCarona(id), nil
+	for rid := range reservas {
+		g.notificar(g.cancelarReserva(rid, motivo))
+	}
 }

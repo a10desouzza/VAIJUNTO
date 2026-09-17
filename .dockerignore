@@ -1,6 +1,4 @@
 .git
-.codex
-.agents
 *.exe
 *.test
 *.out

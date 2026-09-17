@@ -1,14 +1,7 @@
-/* ================================================================================================
- * internal/protocolo/modelos.go - VaiJunto: sistema de caronas compartilhadas
- * Autor: Arthur Souza
- *
- * Estruturas compartilhadas pelos clientes e servidor.
- * As tags json definem os nomes dos campos na rede. O transporte usa texto JSON, nao memoria bruta.
- *
- * DIVISAO DE RESPONSABILIDADES:
- * Este pacote define os dados compartilhados. Os sockets e as regras de reserva ficam nos pacotes
- * cliente e servidor.
- * ================================================================================================ */
+// internal/protocolo/modelos.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Estruturas compartilhadas pelos clientes e servidor.
+// As tags json definem os nomes dos campos na rede. O transporte usa texto JSON, nao memoria bruta.
 
 package protocolo
 
@@ -80,9 +73,10 @@ type Sessao struct {
 	Usuario  Usuario `json:"usuario"`
 }
 
-/* OfertaTrecho: Distancia e tempos informados pelo motorista para um par de cidades consecutivas.
+/* OfertaTrecho: Preco, distancia e tempos informados pelo motorista para um par de cidades consecutivas.
  * TempoParada vale somente nas cidades intermediarias; o servidor normaliza o ultimo trecho para zero. */
 type OfertaTrecho struct {
+	Preco       float64 `json:"preco"`
 	DistanciaKM float64 `json:"distancia_km"`
 	TempoViagem int     `json:"tempo_viagem_min"`
 	TempoParada int     `json:"tempo_parada_min"`
@@ -90,7 +84,6 @@ type OfertaTrecho struct {
 
 /* PublicacaoCarona: Dados de entrada da oferta. Uma rota de N cidades precisa de N-1 trechos. */
 type PublicacaoCarona struct {
-	ValorKM  float64        `json:"valor_km"`
 	Chave    string         `json:"chave"`
 	Rota     []string       `json:"rota"`
 	DataHora string         `json:"data_hora"`
@@ -130,7 +123,6 @@ type TrechoConsultado struct {
 
 /* Carona: Resposta da oferta com rota, status e detalhes de seus trechos. */
 type Carona struct {
-	ValorKM   float64            `json:"valor_km"`
 	ID        string             `json:"id"`
 	Motorista string             `json:"motorista_email"`
 	Rota      []string           `json:"rota"`
@@ -139,12 +131,11 @@ type Carona struct {
 	Trechos   []TrechoConsultado `json:"trechos"`
 }
 
-/* BuscaItinerario: Filtros da busca e criterio de ordenacao; MaxTrechos limita o tamanho do caminho. */
+/* BuscaItinerario: Filtros da busca por horario de partida; MaxTrechos limita o tamanho do caminho. */
 type BuscaItinerario struct {
 	Origem     string `json:"origem"`
 	Destino    string `json:"destino"`
 	Data       string `json:"data"`
-	OrdenarPor string `json:"ordenar_por,omitempty"`
 	MaxTrechos int    `json:"max_trechos,omitempty"`
 }
 

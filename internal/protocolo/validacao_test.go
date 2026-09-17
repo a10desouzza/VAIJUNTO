@@ -1,13 +1,6 @@
-/* ================================================================================================
- * internal/protocolo/validacao_test.go - VaiJunto: sistema de caronas compartilhadas
- * Autor: Arthur Souza
- *
- * Casos validos e invalidos para os campos compartilhados.
- *
- * DIVISAO DE RESPONSABILIDADES:
- * Este arquivo prepara cenarios e verifica resultados. As regras exercitadas permanecem nos
- * pacotes da aplicacao.
- * ================================================================================================ */
+// internal/protocolo/validacao_test.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Casos validos e invalidos para os campos compartilhados.
 
 package protocolo
 
@@ -16,16 +9,8 @@ import (
 	"testing"
 )
 
-/* TestValidarEmail
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Submete enderecos validos e invalidos ao validador e compara a aceitacao com o
- * esperado.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
+// TestValidarEmail: Submete enderecos validos e invalidos ao validador e compara a aceitacao com o
+// esperado.
 func TestValidarEmail(t *testing.T) {
 	for _, email := range []string{"ana@exemplo.com", "ana.silva+carona@alunos.uefs.br", "a@menu.test"} {
 		if err := ValidarEmail(email); err != nil {
@@ -39,15 +24,7 @@ func TestValidarEmail(t *testing.T) {
 	}
 }
 
-/* TestValidarNomeSenhaECidade
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Verifica os formatos aceitos e recusados para nome, senha e cidade.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
+// TestValidarNomeSenhaECidade: Verifica os formatos aceitos e recusados para nome, senha e cidade.
 func TestValidarNomeSenhaECidade(t *testing.T) {
 	for _, nome := range []string{"Ana", "João D'Ávila", "Maria-Clara"} {
 		if err := ValidarNome(nome); err != nil {

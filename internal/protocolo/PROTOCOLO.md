@@ -18,7 +18,7 @@ Uma requisição é um objeto JSON UTF-8, sem BOM, delimitado por LF (`\n`). CRL
 {"status":"ERRO","mensagem":"sessão inválida ou expirada; autentique-se"}
 ```
 
-`CADASTRAR` cria a conta e já inicia o acesso. `AUTENTICAR` continua disponível para contas existentes. As duas operações devolvem `id`, `expira_em` e `usuario`. O identificador vale duas horas, é administrado internamente pelo cliente e é revogado por `DESCONECTAR`. Fechar um socket não encerra a sessão. Senhas são armazenadas em RAM como derivação PBKDF2-SHA256 com salt aleatório; o transporte é TCP sem criptografia. Use credenciais de demonstração. Reiniciar o servidor apaga todo o estado.
+`CADASTRAR` cria a conta e já inicia o acesso. `AUTENTICAR` continua disponível para contas existentes. As duas operações devolvem `id`, `expira_em` e `usuario`. O identificador vale 15 minutos a partir do login, sem renovação por atividade, é administrado internamente pelo cliente e é revogado por `DESCONECTAR`. Fechar um socket não encerra a sessão. Senhas são armazenadas em RAM como derivação PBKDF2-SHA256 com salt aleatório; o transporte é TCP sem criptografia. Use credenciais de demonstração. Reiniciar o servidor apaga todo o estado.
 
 ## Operações
 
@@ -27,10 +27,10 @@ Uma requisição é um objeto JSON UTF-8, sem BOM, delimitado por LF (`\n`). CRL
 | CADASTRAR | Público | nome, email, senha, perfil | Sessao |
 | AUTENTICAR | Público | email, senha | Sessao |
 | DESCONECTAR | Autenticado | objeto vazio | omitido |
-| PUBLICAR_CARONA | MOTORISTA | chave, rota, data_hora, assentos, valor_km, trechos | Carona |
+| PUBLICAR_CARONA | MOTORISTA | chave, rota, data_hora, assentos, trechos | Carona |
 | CONSULTAR_CARONAS | MOTORISTA | objeto vazio | Lista das próprias caronas, inclusive canceladas, e passageiros ativos por trecho |
 | CANCELAR_CARONA | MOTORISTA | id | Carona cancelada |
-| BUSCAR_ITINERARIO | PASSAGEIRO | origem, destino, data, ordenar_por opcional, max_trechos opcional | ResultadoBusca |
+| BUSCAR_ITINERARIO | PASSAGEIRO | origem, destino, data, max_trechos opcional | ResultadoBusca |
 | CONFIRMAR_RESERVA | PASSAGEIRO | chave, trechos_ids em ordem | Reserva |
 | CONSULTAR_RESERVAS | PASSAGEIRO | objeto vazio | Lista das próprias reservas, inclusive canceladas |
 | CANCELAR_RESERVA | PASSAGEIRO | id | Reserva cancelada |
@@ -40,11 +40,11 @@ Uma requisição é um objeto JSON UTF-8, sem BOM, delimitado por LF (`\n`). CRL
 
 `perfil`: MOTORISTA ou PASSAGEIRO. Senha: no mínimo 8 caracteres Unicode e no máximo 128 bytes UTF-8, sem caracteres de controle. Nome: ao menos duas letras e até 100 bytes, admitindo espaços, marcas de acentuação, hífen, apóstrofo e ponto. Cada conta possui um perfil. Email é normalizado para minúsculas, limitado a 254 bytes e validado sintaticamente, sem verificar a existência da caixa postal.
 
-`rota`: de 2 a 21 cidades distintas, até 100 bytes por nome. Espaços excedentes são normalizados e a busca ignora maiúsculas/minúsculas. `trechos` deve conter exatamente uma oferta por par consecutivo de cidades, com `distancia_km`, `tempo_viagem_min` e `tempo_parada_min`. O motorista informa `valor_km` na carona. O servidor calcula o preço por passageiro multiplicando valor/km pela distância e arredondando para centavos. Valor/km: de 0 a 1000000. Distância: positiva, até 100000 km. Ambos admitem até duas casas decimais; preço calculado por trecho limitado a 1000000. Viagem: de 1 a 10080 minutos. Parada: de 0 a 10080 minutos. `assentos`: de 1 a 100. Valor/km zero permite carona gratuita; parada omitida assume zero. IDs de caronas, trechos e reservas são gerados pelo servidor.
+`rota`: de 2 a 21 cidades distintas, até 100 bytes por nome. Espaços excedentes são normalizados e a busca ignora maiúsculas/minúsculas. `trechos` contém uma oferta por par consecutivo de cidades, com `preco`, `distancia_km`, `tempo_viagem_min` e `tempo_parada_min`. O motorista escolhe o preço por passageiro de cada trecho, entre 0 e 1000000 reais, com até duas casas decimais. Zero permite carona gratuita. A distância é informativa: deve ser positiva, até 100000 km, com até duas casas decimais. Viagem: de 1 a 10080 minutos. Parada: de 0 a 10080 minutos. `assentos`: de 1 a 100. IDs de caronas, trechos e reservas são gerados pelo servidor.
 
-`data_hora`: partida inicial em RFC3339 com fuso. Os horários dos próximos trechos são calculados somando viagem e parada do trecho anterior. `data`: AAAA-MM-DD, comparada com a data da primeira partida no fuso da oferta. Conexões podem atravessar a meia-noite. A publicação exige partida futura. Novas reservas não são permitidas após a partida inicial de qualquer carona usada no itinerário, mesmo se o embarque seria em uma cidade intermediária.
+`data_hora`: partida inicial em RFC3339 com fuso. Os horários dos próximos trechos são calculados somando viagem e parada do trecho anterior. `data`: AAAA-MM-DD, comparada com a data da primeira partida no fuso da oferta. Conexões podem atravessar a meia-noite. A publicação exige partida futura. Novas reservas são permitidas somente antes da partida de cada trecho solicitado. Trechos futuros continuam disponíveis durante a viagem anterior e a parada intermediária, mesmo com a carona já iniciada. No instante exato da partida do trecho, novas reservas são recusadas.
 
-Busca: caminhos sem repetir cidades e com vagas em todos os trechos. A próxima partida deve ser posterior ou igual à chegada anterior mais a parada mínima. Soma financeira em centavos; duração inclui esperas e exclui a parada após o destino final. `ordenar_por`: PRECO (padrão), TEMPO ou TRECHOS. Desempates: preço, duração, quantidade de trechos e IDs. `max_trechos`: padrão 12, máximo 20. Há limite de 100 resultados e 50000 arestas examinadas. `limitada: true` indica que a exploração foi limitada; a ordenação se aplica aos resultados encontrados, sem garantia de ótimo global nesse caso.
+Busca: caminhos sem repetir cidades e com vagas em todos os trechos. A próxima partida deve ser posterior ou igual à chegada anterior mais a parada mínima. Soma financeira em centavos; duração inclui esperas e exclui a parada após o destino final. Ordenação única pelo horário de partida do primeiro trecho, em ordem crescente e comparando instantes com seus fusos. Desempates: preço, duração, quantidade de trechos e IDs. `max_trechos`: padrão 12, máximo 20. Há limite de 100 resultados e 50000 arestas examinadas. `limitada: true` indica que a exploração foi limitada; a ordenação se aplica aos resultados encontrados, sem garantia de ótimo global nesse caso.
 
 `chave`: identificador de 1 a 100 bytes escolhido pelo cliente para uma publicação ou confirmação. Repetir uma operação bem-sucedida com a mesma chave e conteúdo devolve o recurso existente sem duplicá-lo, inclusive se ele já tiver sido cancelado. Reutilizar a chave com dados diferentes é erro. Chaves são separadas por usuário e operação. Falhas não consomem a chave. Cancelamentos repetidos não devolvem assentos duas vezes.
 
@@ -64,10 +64,10 @@ Os campos abaixo estão presentes nas respostas, salvo os dois explicitamente op
 | :--- | :--- |
 | Usuario | `nome`, `email`, `perfil`: strings; nunca contém senha, salt ou hash |
 | Sessao | `id`: identificador aleatório interno; `expira_em`: instante de expiração; `usuario`: Usuario |
-| Trecho | `id`, `carona_id`: identificadores; `origem`, `destino`: cidades; `motorista_email`: proprietário; `status`: `ATIVA` ou `CANCELADA`; `data_hora`: partida deste trecho; `distancia_km`: distância; `preco`: preço calculado; `tempo_viagem_min`: duração da viagem; `tempo_parada_min`: parada após chegada; `capacidade`: total de vagas; `assentos_livres`: vagas disponíveis |
+| Trecho | `id`, `carona_id`: identificadores; `origem`, `destino`: cidades; `motorista_email`: proprietário; `status`: `ATIVA` ou `CANCELADA`; `data_hora`: partida deste trecho; `distancia_km`: distância; `preco`: preço escolhido pelo motorista; `tempo_viagem_min`: duração da viagem; `tempo_parada_min`: parada após chegada; `capacidade`: total de vagas; `assentos_livres`: vagas disponíveis |
 | PassageiroConfirmado | `reserva_id`: reserva ativa; `passageiro`: Usuario; `assento`: número atribuído neste trecho |
 | TrechoConsultado | `trecho`: Trecho; `passageiros`: lista de PassageiroConfirmado, ordenada pelo assento |
-| Carona | `id`, `motorista_email`: strings; `rota`: lista ordenada de cidades; `data_hora`: partida inicial; `valor_km`: preço por km; `status`: `ATIVA`, `PARCIALMENTE_CANCELADA` ou `CANCELADA`; `trechos`: lista ordenada de TrechoConsultado |
+| Carona | `id`, `motorista_email`: strings; `rota`: lista ordenada de cidades; `data_hora`: partida inicial; `status`: `ATIVA`, `PARCIALMENTE_CANCELADA` ou `CANCELADA`; `trechos`: lista ordenada de TrechoConsultado |
 | Itinerario | `trechos`: lista ordenada de Trecho; `preco_total`: soma dos preços; `duracao_total_min`: minutos da primeira partida à última chegada, incluindo conexões |
 | ResultadoBusca | `itinerarios`: lista de Itinerario; `limitada`: indica exploração limitada; `max_trechos`: limite efetivo usado |
 | AssentoReservado | `trecho`: cópia do Trecho na confirmação; `numero`: assento atribuído automaticamente, de 1 até a capacidade |
@@ -80,9 +80,8 @@ Os campos abaixo estão presentes nas respostas, salvo os dois explicitamente op
 
 Envie todos os campos listados na tabela de operações, exceto os opcionais descritos aqui. Campos escalares omitidos são decodificados com o valor zero de Go e passam pelas mesmas validações; isso não torna válido omitir nome, cidades, duração de viagem, chave ou outros valores cuja regra rejeita zero/vazio. `dados` não pode ser omitido nem ser `null`.
 
-- `ordenar_por` omitido ou vazio usa `PRECO`; também aceita `TEMPO` e `TRECHOS`.
 - `max_trechos` omitido ou zero usa 12; valores explícitos válidos são de 1 a 20.
-- `valor_km` omitido assume zero (carona gratuita); envie-o explicitamente para evitar ambiguidade.
+- `preco` omitido em uma oferta de trecho assume zero (trecho gratuito); envie-o explicitamente para evitar ambiguidade.
 - `tempo_parada_min` omitido assume zero. Só faz sentido nos trechos anteriores ao último da **carona publicada**. No último trecho, o servidor normaliza um valor válido para zero, antes de calcular a assinatura de idempotência. Valores negativos ou acima de 10080 continuam inválidos. O menu não solicita esse campo no destino final.
 - `trechos_ids` é uma lista de 1 a 20 IDs, na ordem da viagem, sem repetições; os trechos precisam formar um caminho válido.
 
@@ -121,17 +120,17 @@ O passageiro se cadastra da mesma forma, com `perfil: "PASSAGEIRO"`. Nos exemplo
 ### Publicar uma carona
 
 ```json
-{"acao":"PUBLICAR_CARONA","sessao":"SESSAO_ANA","dados":{"chave":"publicacao-1","rota":["Salvador","Feira de Santana"],"data_hora":"2099-10-01T08:00:00-03:00","assentos":2,"valor_km":0.5,"trechos":[{"distancia_km":100,"tempo_viagem_min":120,"tempo_parada_min":0}]}}
+{"acao":"PUBLICAR_CARONA","sessao":"SESSAO_ANA","dados":{"chave":"publicacao-1","rota":["Salvador","Feira de Santana"],"data_hora":"2099-10-01T08:00:00-03:00","assentos":2,"trechos":[{"preco":50,"distancia_km":100,"tempo_viagem_min":120,"tempo_parada_min":0}]}}
 ```
 
 ```json
-{"status":"SUCESSO","mensagem":"Operação concluída.","dados":{"valor_km":0.5,"id":"C000001","motorista_email":"ana@exemplo.com","rota":["Salvador","Feira de Santana"],"data_hora":"2099-10-01T08:00:00-03:00","status":"ATIVA","trechos":[{"trecho":{"status":"ATIVA","distancia_km":100,"id":"T000002","carona_id":"C000001","origem":"Salvador","destino":"Feira de Santana","data_hora":"2099-10-01T08:00:00-03:00","assentos_livres":2,"capacidade":2,"preco":50,"tempo_viagem_min":120,"tempo_parada_min":0,"motorista_email":"ana@exemplo.com"},"passageiros":[]}]}}
+{"status":"SUCESSO","mensagem":"Operação concluída.","dados":{"id":"C000001","motorista_email":"ana@exemplo.com","rota":["Salvador","Feira de Santana"],"data_hora":"2099-10-01T08:00:00-03:00","status":"ATIVA","trechos":[{"trecho":{"status":"ATIVA","distancia_km":100,"id":"T000002","carona_id":"C000001","origem":"Salvador","destino":"Feira de Santana","data_hora":"2099-10-01T08:00:00-03:00","assentos_livres":2,"capacidade":2,"preco":50,"tempo_viagem_min":120,"tempo_parada_min":0,"motorista_email":"ana@exemplo.com"},"passageiros":[]}]}}
 ```
 
 ### Buscar itinerário
 
 ```json
-{"acao":"BUSCAR_ITINERARIO","sessao":"SESSAO_PASSAGEIRO","dados":{"origem":"Salvador","destino":"Feira de Santana","data":"2099-10-01","ordenar_por":"PRECO","max_trechos":12}}
+{"acao":"BUSCAR_ITINERARIO","sessao":"SESSAO_PASSAGEIRO","dados":{"origem":"Salvador","destino":"Feira de Santana","data":"2099-10-01","max_trechos":12}}
 ```
 
 ```json
@@ -197,7 +196,7 @@ Alternativas do motorista:
 Nesta oferta de um único trecho, ambas devolvem a mesma estrutura de carona cancelada:
 
 ```json
-{"status":"SUCESSO","mensagem":"Operação concluída.","dados":{"valor_km":0.5,"id":"C000001","motorista_email":"ana@exemplo.com","rota":["Salvador","Feira de Santana"],"data_hora":"2099-10-01T08:00:00-03:00","status":"CANCELADA","trechos":[{"trecho":{"status":"CANCELADA","distancia_km":100,"id":"T000002","carona_id":"C000001","origem":"Salvador","destino":"Feira de Santana","data_hora":"2099-10-01T08:00:00-03:00","assentos_livres":2,"capacidade":2,"preco":50,"tempo_viagem_min":120,"tempo_parada_min":0,"motorista_email":"ana@exemplo.com"},"passageiros":[]}]}}
+{"status":"SUCESSO","mensagem":"Operação concluída.","dados":{"id":"C000001","motorista_email":"ana@exemplo.com","rota":["Salvador","Feira de Santana"],"data_hora":"2099-10-01T08:00:00-03:00","status":"CANCELADA","trechos":[{"trecho":{"status":"CANCELADA","distancia_km":100,"id":"T000002","carona_id":"C000001","origem":"Salvador","destino":"Feira de Santana","data_hora":"2099-10-01T08:00:00-03:00","assentos_livres":2,"capacidade":2,"preco":50,"tempo_viagem_min":120,"tempo_parada_min":0,"motorista_email":"ana@exemplo.com"},"passageiros":[]}]}}
 ```
 
 Em caronas maiores, cancelar um trecho mantém os demais ativos e pode retornar `PARCIALMENTE_CANCELADA`. As regras de prazo e devolução integral de reservas estão na seção de cancelamentos abaixo.

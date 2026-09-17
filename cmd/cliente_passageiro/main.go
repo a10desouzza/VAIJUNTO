@@ -1,12 +1,6 @@
-/* ================================================================================================
- * cmd/cliente_passageiro/main.go - VaiJunto: sistema de caronas compartilhadas
- * Autor: Arthur Souza
- *
- * Entrada do cliente passageiro. A interface e a comunicacao ficam no pacote cliente.
- *
- * DIVISAO DE RESPONSABILIDADES:
- * Este arquivo inicializa o executavel. O processamento das operacoes fica nos pacotes internal.
- * ================================================================================================ */
+// cmd/cliente_passageiro/main.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Entrada do cliente passageiro. A interface e a comunicacao ficam no pacote cliente.
 
 package main
 
@@ -17,15 +11,7 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-/* main
- *
- * Recebe: Nao recebe parametros Go; a configuracao e lida das flags e variaveis de ambiente do
- * processo.
- *
- * O que faz: inicia o cliente com o perfil PASSAGEIRO e informa erros no terminal.
- *
- * Retorna: Nao retorna valor. Erros fatais sao apresentados no terminal e encerram o programa.
- */
+// main: inicia o cliente com o perfil PASSAGEIRO e informa erros no terminal.
 func main() {
 	if err := cliente.Executar(protocolo.Passageiro); err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -1,14 +1,7 @@
-/* ================================================================================================
- * testes/falhas_test.go - VaiJunto: sistema de caronas compartilhadas
- * Autor: Arthur Souza
- *
- * Recuperacao de resposta perdida e cancelamentos concorrentes.
- * Repetir nao deve criar outra reserva nem devolver a mesma vaga duas vezes.
- *
- * DIVISAO DE RESPONSABILIDADES:
- * Este arquivo prepara cenarios e verifica resultados. As regras exercitadas permanecem nos
- * pacotes da aplicacao.
- * ================================================================================================ */
+// testes/falhas_test.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Recuperacao de resposta perdida e cancelamentos concorrentes.
+// Repetir nao deve criar outra reserva nem devolver a mesma vaga duas vezes.
 
 package testes
 
@@ -22,16 +15,8 @@ import (
 	"vaijunto/internal/servidor"
 )
 
-/* TestRespostaPerdidaPodeSerRecuperada
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Fecha a conexao apos enviar a confirmacao, repete a mesma chave e verifica que existe
- * somente uma reserva.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
+// TestRespostaPerdidaPodeSerRecuperada: Fecha a conexao apos enviar a confirmacao, repete a mesma
+// chave e verifica que existe somente uma reserva.
 func TestRespostaPerdidaPodeSerRecuperada(t *testing.T) {
 	a := preparar(t)
 	c := publicar(t, a, a.motorista, "ab", []string{"A", "B"}, "2099-10-01T08:00:00-03:00", 1)
@@ -61,16 +46,8 @@ func TestRespostaPerdidaPodeSerRecuperada(t *testing.T) {
 	}
 }
 
-/* TestCancelamentoConcorrente
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Alterna cancelamentos de reserva e carona em goroutines e confere que cada vaga foi
- * devolvida uma unica vez.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
+// TestCancelamentoConcorrente: Alterna cancelamentos de reserva e carona em goroutines e confere
+// que cada vaga foi devolvida uma unica vez.
 func TestCancelamentoConcorrente(t *testing.T) {
 	a := preparar(t)
 	c := publicar(t, a, a.motorista, "abc", []string{"A", "B", "C"}, "2099-10-01T08:00:00-03:00", 1)

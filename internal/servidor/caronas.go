@@ -1,13 +1,6 @@
-/* ================================================================================================
- * internal/servidor/caronas.go - VaiJunto: sistema de caronas compartilhadas
- * Autor: Arthur Souza
- *
- * Publicacao e busca no multigrafo. Cada oferta tem ID, horario, preco e vagas independentes.
- *
- * DIVISAO DE RESPONSABILIDADES:
- * O servidor mantem o estado em RAM e valida as operacoes. As estruturas compartilhadas sao
- * protegidas por travas.
- * ================================================================================================ */
+// internal/servidor/caronas.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Publicacao e busca no multigrafo. Cada oferta tem ID, horario, preco e vagas independentes.
 
 package servidor
 
@@ -21,44 +14,20 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-/* cidade
- *
- * Recebe: s: nome da cidade recebido como texto.
- *
- * O que faz: remove espacos excedentes do nome sem retirar acentos.
- *
- * Retorna: Nome sem espacos excedentes, preservando acentos e maiusculas.
- */
+// cidade: remove espacos excedentes do nome sem retirar acentos. Retorna: Nome sem espacos
+// excedentes, preservando acentos e maiusculas.
 func cidade(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-/* chaveCidade
- *
- * Recebe: s: nome da cidade recebido como texto.
- *
- * O que faz: gera a chave de comparacao em minusculas.
- *
- * Retorna: Nome normalizado em minusculas, utilizado como chave dos mapas.
- */
+// chaveCidade: gera a chave de comparacao em minusculas. Retorna: Nome normalizado em minusculas,
+// utilizado como chave dos mapas.
 func chaveCidade(s string) string { return strings.ToLower(cidade(s)) }
 
-/* centavos
- *
- * Recebe: p: valor monetario em reais, representado por float64.
- *
- * O que faz: arredonda um valor em reais para centavos inteiros.
- *
- * Retorna: int64 com o valor arredondado em centavos.
- */
+// centavos: arredonda um valor em reais para centavos inteiros. Retorna: int64 com o valor
+// arredondado em centavos.
 func centavos(p float64) int64 { return int64(math.Round(p * 100)) }
 
-/* validarChave
- *
- * Recebe: s: chave enviada pelo cliente para identificar uma operacao.
- *
- * O que faz: confere preenchimento e tamanho da chave usada para identificar repeticoes.
- *
- * Retorna: nil se preenchida e com ate 100 bytes; error caso contrario.
- */
+// validarChave: confere preenchimento e tamanho da chave usada para identificar repeticoes.
+// Retorna: nil se preenchida e com ate 100 bytes; error caso contrario.
 func validarChave(s string) error {
 	if len(strings.TrimSpace(s)) < 1 || len(s) > 100 {
 		return fmt.Errorf("chave deve ter de 1 a 100 bytes")
@@ -66,28 +35,15 @@ func validarChave(s string) error {
 	return nil
 }
 
-/* assinatura
- *
- * Recebe: v: estrutura de dados da publicacao ou da reserva.
- *
- * O que faz: serializa os dados para comparar repeticoes. Nao e uma assinatura criptografica.
- *
- * Retorna: JSON em string para comparar conteudos de tentativas; nao e um hash criptografico.
- */
+// assinatura: serializa os dados para comparar repeticoes. Nao e uma assinatura criptografica.
+// Retorna: JSON em string para comparar conteudos de tentativas; nao e um hash criptografico.
 func assinatura(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
 
-/* Publicar
- *
- * Recebe: sessaoID: sessao do motorista; p: rota, partida, vagas, valor/km, distancias, tempos e
- * chave; g: estado central.
- *
- * O que faz: valida a oferta e cria a carona e seus trechos. Retorna a carona publicada ou erro.
- *
- * Retorna: Carona criada ou anteriormente criada pela mesma chave e dados; error nas validacoes.
- */
+// Publicar: valida a oferta e cria a carona e seus trechos. Retorna a carona publicada ou erro.
+// Retorna: Carona criada ou anteriormente criada pela mesma chave e dados; error nas validacoes.
 func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCarona) (protocolo.Carona, error) {
 	if err := validarChave(p.Chave); err != nil {
 		return protocolo.Carona{}, err
@@ -98,9 +54,6 @@ func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCaron
 	/* Copiamos as listas recebidas para nao guardar vetores que o chamador possa alterar. */
 	p.Rota = append([]string(nil), p.Rota...)
 	p.Trechos = append([]protocolo.OfertaTrecho(nil), p.Trechos...)
-	if !decimalValido(p.ValorKM, 1000000) {
-		return protocolo.Carona{}, fmt.Errorf("valor/km deve estar entre 0 e 1000000 e ter até duas casas decimais")
-	}
 	cidades := make(map[string]bool)
 	for i, nome := range p.Rota {
 		nome = cidade(nome)
@@ -108,8 +61,8 @@ func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCaron
 			return protocolo.Carona{}, err
 		}
 		chave := chaveCidade(nome)
-		if nome == "" || len(nome) > 100 || cidades[chave] {
-			return protocolo.Carona{}, fmt.Errorf("cidades vazias, repetidas ou maiores que 100 bytes")
+		if cidades[chave] {
+			return protocolo.Carona{}, fmt.Errorf("cidades repetidas")
 		}
 		cidades[chave] = true
 		p.Rota[i] = nome
@@ -119,8 +72,8 @@ func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCaron
 		return protocolo.Carona{}, fmt.Errorf("data_hora deve usar RFC3339 com fuso")
 	}
 	for _, t := range p.Trechos {
-		if !decimalValido(t.DistanciaKM, 100000) || t.DistanciaKM <= 0 || p.ValorKM*t.DistanciaKM > 1000000 || t.TempoViagem < 1 || t.TempoViagem > 10080 || t.TempoParada < 0 || t.TempoParada > 10080 {
-			return protocolo.Carona{}, fmt.Errorf("distância deve ser positiva, até 100000 km e duas casas decimais; preço calculado até 1000000; viagem de 1 a 10080 e parada de 0 a 10080 minutos")
+		if !decimalValido(t.DistanciaKM, 100000) || t.DistanciaKM <= 0 || !decimalValido(t.Preco, 1000000) || t.TempoViagem < 1 || t.TempoViagem > 10080 || t.TempoParada < 0 || t.TempoParada > 10080 {
+			return protocolo.Carona{}, fmt.Errorf("distância deve ser positiva, até 100000 km e duas casas decimais; preço entre 0 e 1000000 com até duas casas decimais; viagem de 1 a 10080 e parada de 0 a 10080 minutos")
 		}
 	}
 	// O destino final encerra a carona. Normalizamos antes da assinatura para
@@ -147,10 +100,8 @@ func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCaron
 	o := &oferta{entrada: p, motorista: u.Email, status: protocolo.Ativa, ids: make([]string, 0, len(p.Trechos))}
 	for i, ofertaTrecho := range p.Trechos {
 		tid := g.novoID("T")
-		/* Valor/km em centavos x distancia em centesimos de km.
-		 * Somar 50 antes de dividir por 100 arredonda o resultado para o centavo mais proximo. */
-		precoCentavos := (centavos(p.ValorKM)*centavos(ofertaTrecho.DistanciaKM) + 50) / 100
-		t := protocolo.Trecho{ID: tid, CaronaID: id, Origem: p.Rota[i], Destino: p.Rota[i+1], DataHora: horario.Format(time.RFC3339), Assentos: p.Assentos, Capacidade: p.Assentos, Preco: float64(precoCentavos) / 100, TempoViagem: ofertaTrecho.TempoViagem, TempoParada: ofertaTrecho.TempoParada, Motorista: u.Email, DistanciaKM: ofertaTrecho.DistanciaKM, Status: protocolo.Ativa}
+
+		t := protocolo.Trecho{ID: tid, CaronaID: id, Origem: p.Rota[i], Destino: p.Rota[i+1], DataHora: horario.Format(time.RFC3339), Assentos: p.Assentos, Capacidade: p.Assentos, Preco: float64(centavos(ofertaTrecho.Preco)) / 100, TempoViagem: ofertaTrecho.TempoViagem, TempoParada: ofertaTrecho.TempoParada, Motorista: u.Email, DistanciaKM: ofertaTrecho.DistanciaKM, Status: protocolo.Ativa}
 		g.trechos[tid] = t
 		origem := chaveCidade(t.Origem)
 		/* Append preserva ofertas paralelas: publicar a mesma rota nao substitui a anterior. */
@@ -164,17 +115,12 @@ func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCaron
 	return g.consultarCarona(id), nil
 }
 
-/* consultarCarona
- *
- * Recebe: id: identificador de uma carona existente; g: estado protegido por quem chamou.
- *
- * O que faz: monta a resposta com vagas e passageiros atuais. Exige trava de leitura ou escrita.
- *
- * Retorna: Carona com uma nova lista de trechos e passageiros, refletindo as vagas atuais.
- */
+// consultarCarona: monta a resposta com vagas e passageiros atuais. Exige trava de leitura ou
+// escrita. Retorna: Carona com uma nova lista de trechos e passageiros, refletindo as vagas
+// atuais.
 func (g *GrafoItinerarios) consultarCarona(id string) protocolo.Carona {
 	o := g.caronas[id]
-	c := protocolo.Carona{ID: id, Motorista: o.motorista, Rota: append([]string(nil), o.entrada.Rota...), DataHora: o.entrada.DataHora, Status: o.status, Trechos: make([]protocolo.TrechoConsultado, 0, len(o.ids)), ValorKM: o.entrada.ValorKM}
+	c := protocolo.Carona{ID: id, Motorista: o.motorista, Rota: append([]string(nil), o.entrada.Rota...), DataHora: o.entrada.DataHora, Status: o.status, Trechos: make([]protocolo.TrechoConsultado, 0, len(o.ids))}
 	for _, tid := range o.ids {
 		t := protocolo.TrechoConsultado{Trecho: g.trechos[tid], Passageiros: make([]protocolo.PassageiroConfirmado, 0)}
 		for numero, rid := range g.ocupados[tid] {
@@ -187,15 +133,9 @@ func (g *GrafoItinerarios) consultarCarona(id string) protocolo.Carona {
 	return c
 }
 
-/* ConsultarCaronas
- *
- * Recebe: sessaoID: sessao do motorista; g: estado central.
- *
- * O que faz: retorna apenas as ofertas do motorista autenticado, ordenadas por ID.
- *
- * Retorna: Lista das caronas desse motorista, inclusive canceladas; lista vazia se nao houver;
- * error de autorizacao.
- */
+// ConsultarCaronas: retorna apenas as ofertas do motorista autenticado, ordenadas por ID. Retorna:
+// Lista das caronas desse motorista, inclusive canceladas; lista vazia se nao houver; error de
+// autorizacao.
 func (g *GrafoItinerarios) ConsultarCaronas(sessaoID string) ([]protocolo.Carona, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -213,55 +153,29 @@ func (g *GrafoItinerarios) ConsultarCaronas(sessaoID string) ([]protocolo.Carona
 	return resultado, nil
 }
 
-/* partida
- *
- * Recebe: t: trecho com DataHora em RFC3339, validado na publicacao.
- *
- * O que faz: converte o horario RFC3339 do trecho, validado na publicacao.
- *
- * Retorna: time.Time correspondente a partida do trecho.
- */
+// partida: converte o horario RFC3339 do trecho, validado na publicacao. Retorna: time.Time
+// correspondente a partida do trecho.
 func partida(t protocolo.Trecho) time.Time {
 	h, _ := time.Parse(time.RFC3339, t.DataHora)
 	return h
 }
 
-/* chegada
- *
- * Recebe: t: trecho contendo partida e duracao da viagem em minutos.
- *
- * O que faz: soma o tempo de viagem a partida, sem incluir a parada posterior.
- *
- * Retorna: Horario de chegada, sem a parada posterior.
- */
+// chegada: soma o tempo de viagem a partida, sem incluir a parada posterior. Retorna: Horario de
+// chegada, sem a parada posterior.
 func chegada(t protocolo.Trecho) time.Time {
 	return partida(t).Add(time.Duration(t.TempoViagem) * time.Minute)
 }
 
-/* conectam
- *
- * Recebe: a: trecho anterior; b: trecho que se deseja usar em seguida.
- *
- * O que faz: confere cidade e horario da conexao, considerando a parada do trecho anterior.
- *
- * Retorna: true se as cidades coincidem e b parte apos a chegada mais a parada de a; false caso
- * contrario.
- */
+// conectam: confere cidade e horario da conexao, considerando a parada do trecho anterior.
+// Retorna: true se as cidades coincidem e b parte apos a chegada mais a parada de a; false caso
+// contrario.
 func conectam(a, b protocolo.Trecho) bool {
 	return chaveCidade(a.Destino) == chaveCidade(b.Origem) && !partida(b).Before(chegada(a).Add(time.Duration(a.TempoParada)*time.Minute))
 }
 
-/* Buscar
- *
- * Recebe: sessaoID: sessao do passageiro; b: origem, destino, data, ordenacao e limite de trechos; g:
- * estado central.
- *
- * O que faz: recebe origem, destino, data e ordenacao. Explora caminhos por DFS e retorna opcoes
- * viaveis.
- *
- * Retorna: ResultadoBusca com opcoes, limite e aviso de exploracao limitada, ou error de
- * validacao/autorizacao.
- */
+// Buscar: recebe origem, destino, data; ordena por partida. Explora caminhos por DFS e retorna
+// opcoes viaveis. Retorna: ResultadoBusca com opcoes, limite e aviso de exploracao limitada, ou
+// error de validacao/autorizacao.
 func (g *GrafoItinerarios) Buscar(sessaoID string, b protocolo.BuscaItinerario) (protocolo.ResultadoBusca, error) {
 	if chaveCidade(b.Origem) == "" || chaveCidade(b.Destino) == "" || chaveCidade(b.Origem) == chaveCidade(b.Destino) {
 		return protocolo.ResultadoBusca{}, fmt.Errorf("origem e destino devem ser distintos e não vazios")
@@ -274,12 +188,6 @@ func (g *GrafoItinerarios) Buscar(sessaoID string, b protocolo.BuscaItinerario) 
 	}
 	if b.MaxTrechos < 1 || b.MaxTrechos > 20 {
 		return protocolo.ResultadoBusca{}, fmt.Errorf("max_trechos deve estar entre 1 e 20")
-	}
-	if b.OrdenarPor == "" {
-		b.OrdenarPor = "PRECO"
-	}
-	if b.OrdenarPor != "PRECO" && b.OrdenarPor != "TEMPO" && b.OrdenarPor != "TRECHOS" {
-		return protocolo.ResultadoBusca{}, fmt.Errorf("ordenar_por deve ser PRECO, TEMPO ou TRECHOS")
 	}
 	g.mu.RLock()
 	if _, err := g.autorizar(sessaoID, protocolo.Passageiro); err != nil {
@@ -344,11 +252,8 @@ func (g *GrafoItinerarios) Buscar(sessaoID string, b protocolo.BuscaItinerario) 
 	/* Ordena o conjunto encontrado. Se a busca foi limitada, outras opcoes podem existir. */
 	sort.Slice(resultado.Itinerarios, func(i, j int) bool {
 		a, c := resultado.Itinerarios[i], resultado.Itinerarios[j]
-		if b.OrdenarPor == "TEMPO" && a.DuracaoTotal != c.DuracaoTotal {
-			return a.DuracaoTotal < c.DuracaoTotal
-		}
-		if b.OrdenarPor == "TRECHOS" && len(a.Trechos) != len(c.Trechos) {
-			return len(a.Trechos) < len(c.Trechos)
+		if !partida(a.Trechos[0]).Equal(partida(c.Trechos[0])) {
+			return partida(a.Trechos[0]).Before(partida(c.Trechos[0]))
 		}
 		if centavos(a.PrecoTotal) != centavos(c.PrecoTotal) {
 			return centavos(a.PrecoTotal) < centavos(c.PrecoTotal)

@@ -1,14 +1,7 @@
-/* ================================================================================================
- * internal/cliente/tcp.go - VaiJunto: sistema de caronas compartilhadas
- * Autor: Arthur Souza
- *
- * Comunicacao reutilizavel: abre um socket por operacao, envia NDJSON e fecha apos a resposta.
- * O identificador de sessao reconhece o usuario mesmo quando a conexao anterior foi encerrada.
- *
- * DIVISAO DE RESPONSABILIDADES:
- * O cliente coleta entradas e exibe respostas; o servidor decide permissoes, disponibilidade e
- * alteracoes nas reservas.
- * ================================================================================================ */
+// internal/cliente/tcp.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Comunicacao reutilizavel: abre um socket por operacao, envia NDJSON e fecha apos a resposta.
+// O identificador de sessao reconhece o usuario mesmo quando a conexao anterior foi encerrada.
 
 package cliente
 
@@ -22,18 +15,12 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-/* EnviarRequisicao
- *
- * Recebe: endereco: IP ou nome e porta do servidor; req: envelope com acao, sessao e dados.
- *
- * O que faz: Serializa a requisicao, conecta com prazo de 5 segundos e define 30 segundos para a
- * operacao.
- * Envia JSON com quebra de linha, le a resposta limitada a 16 MiB e verifica seu status.
- * Fecha o socket ao sair. Erro de recepcao nao prova que o servidor deixou de executar o pedido.
- *
- * Retorna: Ponteiro para Resposta e nil quando recebida e interpretada; nil e error na falha.
- * Uma resposta com status ERRO ainda e uma resposta valida, que deve ser tratada pelo chamador.
- */
+// EnviarRequisicao: Serializa a requisicao, conecta com prazo de 5 segundos e define 30 segundos
+// para a operacao. Envia JSON com quebra de linha, le a resposta limitada a 16 MiB e verifica seu
+// status. Fecha o socket ao sair. Erro de recepcao nao prova que o servidor deixou de executar o
+// pedido. Retorna: Ponteiro para Resposta e nil quando recebida e interpretada; nil e error na
+// falha. Uma resposta com status ERRO ainda e uma resposta valida, que deve ser tratada pelo
+// chamador.
 func EnviarRequisicao(endereco string, req protocolo.Requisicao) (*protocolo.Resposta, error) {
 	dados, err := json.Marshal(req)
 	if err != nil {

@@ -1,13 +1,6 @@
-/* ================================================================================================
- * internal/cliente/menu_test.go - VaiJunto: sistema de caronas compartilhadas
- * Autor: Arthur Souza
- *
- * Testes dos menus com entrada simulada e servidor TCP local.
- *
- * DIVISAO DE RESPONSABILIDADES:
- * Este arquivo prepara cenarios e verifica resultados. As regras exercitadas permanecem nos
- * pacotes da aplicacao.
- * ================================================================================================ */
+// internal/cliente/menu_test.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Testes dos menus com entrada simulada e servidor TCP local.
 
 package cliente_test
 
@@ -23,16 +16,8 @@ import (
 	"vaijunto/internal/servidor"
 )
 
-/* TestMenusFluxoCompletoTCP
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Simula entradas dos dois perfis em um servidor TCP local e confere cadastro,
- * publicacao, reserva, cancelamento e avisos.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
+// TestMenusFluxoCompletoTCP: Simula entradas dos dois perfis em um servidor TCP local e confere
+// cadastro, publicacao, reserva, cancelamento e avisos.
 func TestMenusFluxoCompletoTCP(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -59,25 +44,18 @@ func TestMenusFluxoCompletoTCP(t *testing.T) {
 			}
 		}
 	}
-	executar(protocolo.Motorista, "2\nAna\nana@menu.test\nsenha1234\nsenha1234\n1\n3\nSalvador\nFeira\nSerrinha\n2099-10-01\n08:00\n3\n1\n45,50\n120\n15\n25\n60\n1\n2\n0\n", "Conta criada. Acesso realizado: Ana", "publicada com sucesso", "3/3 vagas")
-	executar(protocolo.Passageiro, "2\nBia\nbia@menu.test\nsenha1234\nsenha1234\n1\nSalvador\nSerrinha\n2099-10-01\n1\n1\n1\n2\n0\n", "Conta criada. Acesso realizado: Bia", "confirmada!", "R$ 70,50", "1 vaga reservada", "ATIVA")
+	executar(protocolo.Motorista, "2\nAna\nana@menu.test\nsenha1234\nsenha1234\n1\n3\nSalvador\nFeira\nSerrinha\n2099-10-01\n08:00\n3\n100\n45,50\n120\n15\n80\n25\n60\n1\n2\n0\n", "Conta criada. Acesso realizado: Ana", "publicada com sucesso", "3/3 vagas")
+	executar(protocolo.Passageiro, "2\nBia\nbia@menu.test\nsenha1234\nsenha1234\n1\nSalvador\nSerrinha\n2099-10-01\n1\n1\n2\n0\n", "Conta criada. Acesso realizado: Bia", "confirmada!", "R$ 70,50", "1 vaga reservada", "ATIVA")
 	executar(protocolo.Motorista, "1\nana@menu.test\nsenha1234\n2\n0\n", "2/3 vagas", "Bia")
 	executar(protocolo.Passageiro, "1\nbia@menu.test\nsenha1234\n3\n1\n1\n2\n0\n", "Os assentos foram devolvidos", "CANCELADA")
-	executar(protocolo.Passageiro, "1\nbia@menu.test\nsenha1234\n1\nSalvador\nSerrinha\n2099-10-01\n1\n1\n1\n0\n", "confirmada!")
+	executar(protocolo.Passageiro, "1\nbia@menu.test\nsenha1234\n1\nSalvador\nSerrinha\n2099-10-01\n1\n1\n0\n", "confirmada!")
 	executar(protocolo.Motorista, "1\nana@menu.test\nsenha1234\n5\n1\n2\n1\n2\n0\n", "Trecho cancelado", "PARCIALMENTE_CANCELADA", "3/3 vagas")
 	executar(protocolo.Passageiro, "1\nbia@menu.test\nsenha1234\n5\n2\n0\n", "Aviso da reserva", "itinerário inteiro cancelado", "CANCELADA")
 	executar(protocolo.Motorista, "1\nana@menu.test\nsenha1234\n2\n3\n1\n1\n2\n0\n", "3/3 vagas", "Carona cancelada", "CANCELADA")
 }
 
-/* TestMenuEntradaInvalidaEEncerramento
- *
- * Recebe: t: *testing.T fornecido pelo Go para registrar falhas e mensagens deste teste.
- *
- * O que faz: Simula EOF e opcoes invalidas e verifica o encerramento do menu sem falha.
- *
- * Retorna: Nao retorna valor. Usa t.Fatal, t.Error ou suas variantes para indicar falha nas
- * verificacoes.
- */
+// TestMenuEntradaInvalidaEEncerramento: Simula EOF e opcoes invalidas e verifica o encerramento do
+// menu sem falha.
 func TestMenuEntradaInvalidaEEncerramento(t *testing.T) {
 	for _, entrada := range []string{"", "abc\n9\n0\n", "2\nNome\n"} {
 		var saida bytes.Buffer

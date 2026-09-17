@@ -1,6 +1,13 @@
+// internal/servidor/tcp_test.go - VaiJunto: sistema de caronas compartilhadas
+// Autor: Arthur Souza
+// Testes do transporte TCP, encerramento de conexoes e expiracao das sessoes.
+
 package servidor
 
 import (
+	"log"
+	"testing/synctest"
+
 	"bufio"
 	"bytes"
 	"context"
@@ -22,6 +29,8 @@ type escritorLimitado struct {
 	zero   bool
 }
 
+// Write: recebe bytes e simula escrita parcial, ausencia de progresso ou falha configurada.
+// Retorna: quantidade de bytes armazenados e o erro simulado, quando houver.
 func (e *escritorLimitado) Write(p []byte) (int, error) {
 	if e.err != nil {
 		return 0, e.err
@@ -34,6 +43,8 @@ func (e *escritorLimitado) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+// TestEscreverCompletaEscritasParciaisEPropagaErros: recebe o teste e simula respostas do escritor.
+// Confere envio completo, deteccao de escrita sem progresso e propagacao do erro. Sem retorno.
 func TestEscreverCompletaEscritasParciaisEPropagaErros(t *testing.T) {
 	t.Run("escritas parciais", func(t *testing.T) {
 		e := &escritorLimitado{limite: 2}
@@ -61,37 +72,8 @@ func TestEscreverCompletaEscritasParciaisEPropagaErros(t *testing.T) {
 	})
 }
 
-func TestAtenderConexaoProcessaVariasLinhasNoMesmoPipe(t *testing.T) {
-	servidor, cliente := net.Pipe()
-	concluido := make(chan struct{})
-	go func() {
-		AtenderConexao(servidor, NovoGrafo(), time.Second)
-		close(concluido)
-	}()
-	t.Cleanup(func() {
-		cliente.Close()
-		<-concluido
-	})
-
-	if _, err := io.WriteString(cliente, "{\"acao\":\"DESCONHECIDA\",\"dados\":{}}\n{\"acao\":\"DESCONHECIDA\",\"dados\":{}}\n"); err != nil {
-		t.Fatal(err)
-	}
-	leitor := bufio.NewReader(cliente)
-	for i := 0; i < 2; i++ {
-		linha, err := leitor.ReadBytes('\n')
-		if err != nil {
-			t.Fatal(err)
-		}
-		var resposta protocolo.Resposta
-		if err := decodificar(linha, &resposta); err != nil {
-			t.Fatalf("resposta %d inválida: %v", i, err)
-		}
-		if resposta.Status != protocolo.Erro || resposta.Mensagem == "" {
-			t.Fatalf("resposta %d = %+v", i, resposta)
-		}
-	}
-}
-
+// TestAtenderConexaoIgnoraLinhaIncompleta: recebe o teste e fecha o pipe sem enviar a quebra de linha.
+// Confere que o cadastro incompleto nao altera o estado do servidor. Sem retorno.
 func TestAtenderConexaoIgnoraLinhaIncompleta(t *testing.T) {
 	g := NovoGrafo()
 	servidor, cliente := net.Pipe()
@@ -109,6 +91,8 @@ func TestAtenderConexaoIgnoraLinhaIncompleta(t *testing.T) {
 	}
 }
 
+// TestAtenderConexaoRejeitaLinhaAcimaDoLimite: recebe o teste e envia uma mensagem grande demais.
+// Confere a resposta de erro por limite de tamanho. Sem retorno.
 func TestAtenderConexaoRejeitaLinhaAcimaDoLimite(t *testing.T) {
 	servidor, cliente := net.Pipe()
 	concluido := make(chan struct{})
@@ -164,6 +148,8 @@ func (l *listenerBloqueado) Close() error {
 }
 func (*listenerBloqueado) Addr() net.Addr { return enderecoFalso("teste") }
 
+// TestServirRetornaErroDeAcceptEEncerraComContexto: recebe o teste e usa listeners simulados.
+// Confere propagacao de falha no Accept e encerramento por cancelamento do contexto. Sem retorno.
 func TestServirRetornaErroDeAcceptEEncerraComContexto(t *testing.T) {
 	t.Run("erro de accept", func(t *testing.T) {
 		esperado := errors.New("accept falhou")
@@ -188,4 +174,71 @@ func TestServirRetornaErroDeAcceptEEncerraComContexto(t *testing.T) {
 			t.Fatal("Servir não encerrou após cancelar o contexto")
 		}
 	})
+}
+
+// Listener sem rede real permite adiantar 15 minutos com o relogio do synctest.
+type listenerOcioso struct {
+	fechado chan struct{}
+	umaVez  sync.Once
+}
+
+func (l *listenerOcioso) Accept() (net.Conn, error) { <-l.fechado; return nil, net.ErrClosed }
+func (l *listenerOcioso) Close() error              { l.umaVez.Do(func() { close(l.fechado) }); return nil }
+func (l *listenerOcioso) Addr() net.Addr            { return &net.TCPAddr{} }
+
+// TestServidorRegistraExpiracaoSemNovasRequisicoes: recebe o teste e avanca o relogio simulado.
+// Confere que a sessao ociosa expira e gera apenas um registro, sem novos pedidos. Sem retorno.
+func TestServidorRegistraExpiracaoSemNovasRequisicoes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		g := NovoGrafo()
+		var saida bytes.Buffer
+		g.logger = log.New(&saida, "", 0)
+		g.sessoes["sessao-teste"] = sessao{email: "ocioso@teste.com", expira: time.Now().Add(15 * time.Minute)}
+		listener := &listenerOcioso{fechado: make(chan struct{})}
+		ctx, cancelar := context.WithCancel(context.Background())
+		defer cancelar()
+		fim := make(chan error, 1)
+		go func() { fim <- Servir(ctx, listener, g, time.Second) }()
+		synctest.Wait()
+		time.Sleep(15*time.Minute + time.Second)
+		synctest.Wait()
+		g.mu.RLock()
+		restantes := len(g.sessoes)
+		g.mu.RUnlock()
+		if restantes != 0 || strings.Count(saida.String(), "DESCONECTOU usuário=ocioso@teste.com motivo=sessão expirada (15 minutos)") != 1 {
+			t.Fatalf("expiração ociosa: %d %s", restantes, &saida)
+		}
+		cancelar()
+		if err := <-fim; err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// TestOperacaoTCPNaoRegistraDesconexaoNemEncerraSessao: recebe o teste e fecha um socket apos consultar.
+// Confere que a sessao continua valida e nao houve registro de logout. Sem retorno.
+func TestOperacaoTCPNaoRegistraDesconexaoNemEncerraSessao(t *testing.T) {
+	c := criarCenario(t)
+	var saida bytes.Buffer
+	c.g.logger = log.New(&saida, "", 0)
+	servidor, cliente := net.Pipe()
+	fim := make(chan struct{})
+	go func() { AtenderConexao(servidor, c.g, time.Second); close(fim) }()
+	cliente.SetDeadline(time.Now().Add(2 * time.Second))
+	t.Cleanup(func() { cliente.Close(); <-fim })
+	req := protocolo.Requisicao{Acao: protocolo.AcaoReservas, SessaoID: c.p, Dados: json.RawMessage(`{}`)}
+	if err := json.NewEncoder(cliente).Encode(req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bufio.NewReader(cliente).ReadBytes('\n'); err != nil {
+		t.Fatal(err)
+	}
+	cliente.Close()
+	<-fim
+	if saida.Len() != 0 {
+		t.Fatal(saida.String())
+	}
+	if _, err := c.g.ConsultarReservas(c.p); err != nil {
+		t.Fatal("fechar socket invalidou sessão", err)
+	}
 }
