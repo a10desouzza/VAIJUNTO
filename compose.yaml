@@ -2,6 +2,7 @@ name: vaijunto
 services:
   servidor:
     image: vaijunto:local
+    volumes: ["dados-servidor:/dados"]
     build:
       context: .
       target: runtime
@@ -38,3 +39,5 @@ services:
     environment:
       VAIJUNTO_SERVIDOR: "${VAIJUNTO_SERVIDOR:-servidor:8080}"
     command: ["-clientes", "100", "-vagas", "5"]
+volumes:
+  dados-servidor:

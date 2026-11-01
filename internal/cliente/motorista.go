@@ -1,6 +1,14 @@
-// internal/cliente/motorista.go - VaiJunto: sistema de caronas compartilhadas
-// Autor: Arthur Souza
-// Formularios de publicacao, consulta e cancelamento de caronas.
+// Arquivo: internal/cliente/motorista.go
+// Projeto: Consórcios - Problema 2
+// Autor: Arthur de Andrade Souza
+// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
+// Professor: Antonio A T R Coutinho
+// Declaração de não plágio: declaro que não apresento trabalho de terceiros
+// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
+//
+// Reúne os formulários de publicação, consulta e cancelamento de caronas e trechos.
+// Envia os dados do motorista à empresa escolhida e apresenta vagas e passageiros.
+// As permissões e regras finais de cada operação são verificadas pelo servidor.
 
 package cliente
 
@@ -8,12 +16,14 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
 	"vaijunto/internal/protocolo"
 )
 
-// publicar: monta rota e trechos, mostra o resumo e envia apos a confirmacao do motorista.
-// Retorna: nil ao publicar ou desistir na confirmacao; error de entrada, geracao da chave ou
-// envio.
+// publicar monta rota e trechos, mostra o resumo e envia apos a confirmacao do motorista.
+// Usa o receptor m para acessar entrada, saida e estado do menu.
+// Recebe: nenhum parametro.
+// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func (m *menu) publicar() error {
 	m.cabecalho("Publicar carona", "")
 	n := m.numero("Quantidade de cidades da rota", 2, 21)
@@ -70,8 +80,10 @@ func (m *menu) publicar() error {
 	return nil
 }
 
-// caronas: consulta e mostra vagas e passageiros por trecho. Retorna a lista para selecao.
-// Retorna: Lista de caronas exibidas e nil, ou nil e error se a consulta falhar.
+// caronas consulta e mostra vagas e passageiros por trecho. Retorna a lista para selecao.
+// Usa o receptor m para acessar entrada, saida e estado do menu.
+// Recebe: nenhum parametro.
+// Retorna: ([]protocolo.Carona, error). Em falha, devolve error; em sucesso, erro nil.
 func (m *menu) caronas() ([]protocolo.Carona, error) {
 	m.cabecalho("Minhas caronas", "")
 	var caronas []protocolo.Carona
@@ -94,8 +106,10 @@ func (m *menu) caronas() ([]protocolo.Carona, error) {
 	return caronas, nil
 }
 
-// cancelarCarona: seleciona uma oferta e pede confirmacao antes de solicitar o cancelamento.
-// Retorna: nil ao cancelar ou voltar; error de consulta ou cancelamento.
+// cancelarCarona seleciona uma oferta e pede confirmacao antes de solicitar o cancelamento.
+// Usa o receptor m para acessar entrada, saida e estado do menu.
+// Recebe: nenhum parametro.
+// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func (m *menu) cancelarCarona() error {
 	caronas, err := m.caronas()
 	if err != nil || len(caronas) == 0 {
@@ -118,5 +132,39 @@ func (m *menu) cancelarCarona() error {
 		return err
 	}
 	fmt.Fprintln(m.saida, "Carona cancelada.")
+	return nil
+}
+
+// cancelarTrecho consulta caronas, seleciona um trecho e confirma a solicitacao de cancelamento.
+// Usa o receptor m para acessar entrada, saida e estado do menu.
+// Recebe: nenhum parametro.
+// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
+func (m *menu) cancelarTrecho() error {
+	caronas, err := m.caronas()
+	if err != nil || len(caronas) == 0 {
+		return err
+	}
+	n := m.numero("Número da carona (0 = voltar)", 0, len(caronas))
+	if n == 0 {
+		return nil
+	}
+	carona := caronas[n-1]
+	n = m.numero("Número do trecho para cancelar (0 = voltar)", 0, len(carona.Trechos))
+	if n == 0 {
+		return nil
+	}
+	trecho := carona.Trechos[n-1].Trecho
+	if trecho.Status == protocolo.Cancelada {
+		fmt.Fprintln(m.saida, "Trecho já cancelado.")
+		return nil
+	}
+	fmt.Fprintln(m.saida, "As reservas que dependem deste trecho serão canceladas por inteiro.")
+	if m.numero("Confirmar? 1 = sim, 0 = voltar", 0, 1) != 1 {
+		return nil
+	}
+	if err := m.enviar(protocolo.AcaoCancelarTrecho, protocolo.Identificador{ID: trecho.ID}, nil); err != nil {
+		return err
+	}
+	fmt.Fprintln(m.saida, "Trecho cancelado. Consulte as caronas para verificar as vagas.")
 	return nil
 }

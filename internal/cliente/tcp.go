@@ -1,7 +1,14 @@
-// internal/cliente/tcp.go - VaiJunto: sistema de caronas compartilhadas
-// Autor: Arthur Souza
-// Comunicacao reutilizavel: abre um socket por operacao, envia NDJSON e fecha apos a resposta.
-// O identificador de sessao reconhece o usuario mesmo quando a conexao anterior foi encerrada.
+// Arquivo: internal/cliente/tcp.go
+// Projeto: Consórcios - Problema 2
+// Autor: Arthur de Andrade Souza
+// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
+// Professor: Antonio A T R Coutinho
+// Declaração de não plágio: declaro que não apresento trabalho de terceiros
+// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
+//
+// Abre uma conexão TCP com a empresa e envia uma requisição JSON terminada por linha.
+// Recebe e interpreta a resposta, aplicando prazos e limites de tamanho.
+// As telas reutilizam essa função sem precisar implementar o transporte de rede.
 
 package cliente
 
@@ -12,15 +19,16 @@ import (
 	"io"
 	"net"
 	"time"
+
 	"vaijunto/internal/protocolo"
 )
 
-// EnviarRequisicao: Serializa a requisicao, conecta com prazo de 5 segundos e define 30 segundos
+// EnviarRequisicao Serializa a requisicao, conecta com prazo de 5 segundos e define 30 segundos
 // para a operacao. Envia JSON com quebra de linha, le a resposta limitada a 16 MiB e verifica seu
 // status. Fecha o socket ao sair. Erro de recepcao nao prova que o servidor deixou de executar o
-// pedido. Retorna: Ponteiro para Resposta e nil quando recebida e interpretada; nil e error na
-// falha. Uma resposta com status ERRO ainda e uma resposta valida, que deve ser tratada pelo
-// chamador.
+// pedido.
+// Recebe: endereco string, req protocolo.Requisicao.
+// Retorna: a resposta decodificada ou erro de transporte/protocolo. Erro de transporte nao garante que o servidor deixou de executar o pedido.
 func EnviarRequisicao(endereco string, req protocolo.Requisicao) (*protocolo.Resposta, error) {
 	dados, err := json.Marshal(req)
 	if err != nil {

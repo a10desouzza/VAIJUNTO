@@ -1,545 +1,952 @@
-# VaiJunto — Sistema de Caronas Compartilhadas
+# Consórcios — Problema 2: Caronas Compartilhadas
 
-Projeto criado para o Problema 1 da disciplina TEC502 — Concorrência e Conectividade, usando a metodologia PBL.
+Projeto da disciplina TEC502 — Concorrência e Conectividade. O consórcio reúne **VaiJunto**, **Minas** e **São Paulo**, com um servidor independente por empresa.
 
-O VaiJunto permite que motoristas ofereçam caronas e passageiros reservem viagens com um ou mais trechos. Um itinerário pode combinar caronas de diferentes motoristas, desde que as cidades e os horários sejam compatíveis.
+Este guia usa **Linux e Bash**, como no laboratório. O cenário principal executa um contêiner Docker em cada um de três computadores diferentes.
 
 ## Sumário
 
-- [Sobre o projeto](#sobre-o-projeto)
-- [Executar com Go](#executar-com-go)
-- [Execução com Docker](#execução-com-docker)
-- [Acesso por outro computador](#acesso-por-outro-computador)
-- [Exemplo de utilização](#exemplo-de-utilização)
-- [Como o sistema funciona](#como-o-sistema-funciona)
-- [Estrutura do projeto](#estrutura-do-projeto)
+- [Como funciona](#como-funciona)
+- [1. Preparar os três computadores](#1-preparar-os-três-computadores)
+- [2. Identificar os endereços e as portas](#2-identificar-os-endereços-e-as-portas)
+- [3. Compilar a imagem Docker](#3-compilar-a-imagem-docker)
+- [4. Iniciar uma empresa em cada computador](#4-iniciar-uma-empresa-em-cada-computador)
+- [5. Verificar a comunicação](#5-verificar-a-comunicação)
+- [6. Executar os clientes](#6-executar-os-clientes)
+- [7. Demonstrar uma viagem entre empresas](#7-demonstrar-uma-viagem-entre-empresas)
+- [8. Executar o simulador de carga](#8-executar-o-simulador-de-carga)
+- [9. Demonstrar falhas de comunicação](#9-demonstrar-falhas-de-comunicação)
+- [Backup local e recuperação](#backup-local-e-recuperação)
+- [Portas ocupadas e seleção automática](#portas-ocupadas-e-seleção-automática)
+- [Executar sem Docker](#executar-sem-docker)
+- [Três empresas no mesmo computador](#três-empresas-no-mesmo-computador)
+- [Executar no Windows com PowerShell](#executar-no-windows-com-powershell)
 - [Testes automatizados](#testes-automatizados)
-- [Protocolo de comunicação](#protocolo-de-comunicação)
+- [Arquitetura e organização do código](#arquitetura-e-organização-do-código)
+- [Garantias e limites](#garantias-e-limites)
 - [Problemas comuns](#problemas-comuns)
 
-## Sobre o projeto
+## Como funciona
 
-A aplicação usa Go e sua biblioteca padrão. A comunicação acontece por sockets TCP, com mensagens JSON delimitadas por quebra de linha (NDJSON). Não são usados HTTP, REST, RPC, gRPC ou bancos de dados externos.
+O motorista publica caronas somente na própria empresa. O passageiro também se conecta apenas à sua empresa, mas pode encontrar e reservar itinerários que combinem trechos das outras duas.
 
-| Componente | Função |
-| :--- | :--- |
-| Servidor central | Armazena usuários, sessões, caronas, reservas e notificações na memória |
-| Cliente motorista | Permite publicar caronas, consultar passageiros e cancelar caronas ou trechos |
-| Cliente passageiro | Permite buscar itinerários, confirmar e cancelar reservas e consultar notificações |
+| Comunicação | Transporte | Porta usada nos exemplos |
+|---|---|---|
+| Cliente → sua empresa | TCP com JSON delimitado por linha (NDJSON) | 8080 |
+| Empresa → outras empresas | API REST com HTTP e JSON | 8081 |
 
-```mermaid
-flowchart LR
-    M[Cliente motorista] <-->|TCP / NDJSON| S[Servidor central]
-    P[Cliente passageiro] <-->|TCP / NDJSON| S
-    S --- E[Estado em RAM protegido por RWMutex]
-```
+As empresas trocam ofertas para consulta e metadados para coordenar transações. Cada uma mantém suas contas, caronas e assentos em RAM e salva um arquivo local para recuperação. Os arquivos ficam separados por empresa. Não existe banco de dados, armazenamento compartilhado entre empresas ou coordenador fixo.
 
-As cidades são vértices de um multigrafo direcionado, e os trechos são suas arestas. Duas ofertas com a mesma rota possuem IDs e disponibilidades independentes. O motorista escolhe diretamente o preço por passageiro de cada trecho. A distância continua sendo informada, mas não determina o preço.
+## 1. Preparar os três computadores
 
-As vagas são controladas por trecho. O passageiro não escolhe um número de assento; a atribuição é automática. A reserva é atômica: todos os trechos são confirmados juntos ou nenhum é reservado. O servidor usa `sync.RWMutex` para proteger consultas e alterações do estado.
+Em cada computador:
 
-> **Estado em memória:** encerrar ou reiniciar o servidor apaga cadastros, sessões, caronas, reservas e notificações. Fechar apenas um cliente não apaga esses dados.
-
-## Executar com Go
-
-### Requisitos
-
-- Go 1.27.0 ou mais recente, conforme o `go.mod`;
-- Windows ou Linux;
-- código completo do projeto;
-- porta TCP 8080 disponível, ou outra porta configurada.
-
-Verifique a instalação:
-
-```bash
-go version
-```
-
-Abra a pasta que contém `go.mod` e `compose.yaml`. Todos os comandos deste manual devem ser executados nessa pasta.
-
-### 1. Iniciar o servidor
-
-No primeiro terminal:
-
-```bash
-go run ./cmd/servidor
-```
-
-O servidor escuta na porta 8080. Mantenha o terminal aberto enquanto usa os clientes. Os comandos abaixo usam `127.0.0.1` para executar os três programas no mesmo computador.
-
-### 2. Iniciar o cliente motorista
-
-Em outro terminal:
-
-```bash
-go run ./cmd/cliente_motorista -servidor 127.0.0.1:8080
-```
-
-Escolha **2 - Criar conta** e informe nome, e-mail e senha. Após o cadastro, o acesso é realizado automaticamente e o menu do motorista é exibido.
-
-| Opção | Ação |
-| :---: | :--- |
-| 1 | Publicar carona |
-| 2 | Minhas caronas e passageiros |
-| 3 | Cancelar carona |
-| 4 | Trocar de conta |
-| 5 | Cancelar trecho |
-| 0 | Sair |
-
-### 3. Iniciar o cliente passageiro
-
-Em um terceiro terminal:
-
-```bash
-go run ./cmd/cliente_passageiro -servidor 127.0.0.1:8080
-```
-
-Crie uma conta usando outro e-mail. O acesso é realizado automaticamente e o menu do passageiro é exibido.
-
-| Opção | Ação |
-| :---: | :--- |
-| 1 | Buscar e reservar itinerário |
-| 2 | Minhas reservas |
-| 3 | Cancelar reserva |
-| 4 | Trocar de conta |
-| 5 | Verificar notificações |
-| 0 | Sair |
-
-### Entrada de dados e cancelamentos
-
-- As datas aceitam `DD/MM/AAAA` ou `AAAA-MM-DD`.
-- O horário usa `HH:MM`, com fuso `-03:00` na publicação pelo menu.
-- A partida precisa estar no futuro.
-- A senha precisa ter pelo menos oito caracteres e fica visível no terminal.
-- Digite `/voltar` em um formulário para retornar ao menu.
-- O passageiro pode cancelar sua reserva antes do início do itinerário.
-- O motorista não pode cancelar uma carona ou trecho após o início da carona.
-- Em A → B → C com dois motoristas, o motorista de B → C também não pode cancelar sua carona ou trecho a partir do início de A → B. Se cancelar antes desse início, a reserva inteira A → B → C é cancelada, as vagas de ambos os trechos são devolvidas e o passageiro recebe uma notificação. A oferta A → B do primeiro motorista continua disponível para outras reservas.
-- Cancelamentos feitos pelo motorista cancelam por inteiro as reservas afetadas e devolvem suas vagas.
-- As notificações são consultadas no menu do passageiro; não há envio espontâneo do servidor.
-
-Para encerrar, escolha **0 - Sair** nos clientes e pressione `Ctrl+C` no terminal do servidor.
-
-### Configurar o endereço do servidor
-
-O endereço padrão está em [internal/configuracao/rede.go](internal/configuracao/rede.go):
-
-```go
-const ServidorPadrao = "192.168.0.67:8080"
-const EscutaPadrao = ":8080"
-```
-
-Você também pode informar o endereço sem editar o código:
-
-```bash
-go run ./cmd/cliente_motorista -servidor 192.168.1.5:8080
-go run ./cmd/cliente_passageiro -servidor 192.168.1.5:8080
-```
-
-A flag `-servidor` tem prioridade sobre `VAIJUNTO_SERVIDOR`, que tem prioridade sobre a constante.
-
-### Alterar a porta local
-
-Em terminais separados:
-
-```bash
-go run ./cmd/servidor -endereco :9000
-go run ./cmd/cliente_motorista -servidor 127.0.0.1:9000
-go run ./cmd/cliente_passageiro -servidor 127.0.0.1:9000
-```
-
-### Sessões e registros do servidor
-
-A sessão vale **15 minutos a partir do login**, sem renovação por atividade. Depois disso, entre novamente. Reservas e caronas permanecem cadastradas. O terminal do servidor mostra o e-mail e perfil de quem entrou, quem saiu pelo menu e quem teve a sessão expirada. A limpeza periódica registra expirações mesmo sem novas requisições, em até aproximadamente um segundo.
-
-O servidor registra `CONECTOU` ao autenticar o usuário e `DESCONECTOU` ao encerrar a sessão pelo cliente (inclusive pela opção **0 - Sair**) ou ao expirar os 15 minutos, informando o motivo. As conexões TCP de cada operação não geram mensagens no terminal. Fechar um socket não encerra a sessão. Se o cliente for fechado abruptamente, a sessão permanece até expirar. Senhas e identificadores de sessão não são registrados. Para acompanhar no Docker: `docker compose logs -f servidor`.
-
-## Execução com Docker
-
-É necessário ter Docker em funcionamento e suporte ao comando `docker compose`. No Windows, abra o Docker Desktop antes de executar os comandos. Não é necessário instalar Go quando toda a execução ocorre em contêineres.
-
-Verifique o ambiente:
+1. Tenha Docker instalado e o serviço em execução.
+2. Disponibilize a mesma versão do código do projeto.
+3. Abra um terminal na pasta que contém `Dockerfile` e `go.mod`.
+4. Confira o Docker:
 
 ```bash
 docker version
-docker compose version
 ```
 
-### 1. Construir a imagem e iniciar o servidor
+Os exemplos pressupõem que seu usuário pode executar Docker. Caso o laboratório exija `sudo`, use-o nos comandos Docker. Ao iniciar o servidor com `sudo`, passe o token explicitamente, conforme indicado adiante.
 
-```bash
-docker compose build
-docker compose up -d servidor
-```
+Go instalado no computador é opcional para o caminho com Docker: a imagem compila o servidor, os clientes e o simulador. Para executar diretamente com Go, o projeto declara **Go 1.27.0** em `go.mod`.
 
-O Dockerfile executa os testes com `-race`, executa `go vet`, compila os programas e gera a imagem `vaijunto:local`.
+## 2. Identificar os endereços e as portas
 
-Confira o servidor:
-
-```bash
-docker compose ps
-docker compose logs servidor
-```
-
-### 2. Abrir os clientes
-
-Em terminais separados:
-
-```bash
-docker compose run --rm motorista
-```
-
-```bash
-docker compose run --rm passageiro
-```
-
-Por padrão, os clientes usam `servidor:8080`, nome disponível somente na rede local do Compose.
-
-Se `VAIJUNTO_SERVIDOR` foi definido para outro computador, remova a variável antes de voltar ao servidor local.
-
-PowerShell:
-
-```powershell
-Remove-Item Env:VAIJUNTO_SERVIDOR -ErrorAction SilentlyContinue
-```
-
-Linux:
-
-```bash
-unset VAIJUNTO_SERVIDOR
-```
-
-### 3. Encerrar ou atualizar
-
-Para encerrar o servidor e remover os recursos do Compose:
-
-```bash
-docker compose down
-```
-
-Depois de alterar o código:
-
-```bash
-docker compose down
-docker compose build --no-cache
-docker compose up -d servidor
-```
-
-Reiniciar o servidor apaga os dados mantidos em memória.
-
-### Porta 8080 ocupada
-
-Verifique qual processo utiliza a porta.
-
-Linux:
-
-```bash
-ss -ltnp 'sport = :8080'
-docker ps --filter publish=8080
-```
-
-PowerShell:
-
-```powershell
-Get-NetTCPConnection -LocalPort 8080 -State Listen
-docker ps --filter "publish=8080"
-```
-
-Também é possível publicar o servidor na porta 9000.
-
-PowerShell:
-
-```powershell
-$env:VAIJUNTO_PORTA = "9000"
-docker compose up -d servidor
-```
-
-Linux:
-
-```bash
-VAIJUNTO_PORTA=9000 docker compose up -d servidor
-```
-
-Clientes externos devem então usar `IP_DO_SERVIDOR:9000`. Dentro da rede Compose, o endereço continua sendo `servidor:8080`.
-
-## Acesso por outro computador
-
-Use um único computador como servidor central. Os demais computadores executam apenas os clientes.
-
-O sistema foi testado em computadores distintos na mesma rede local, com os clientes acessando o servidor pelo IP e pela porta TCP da máquina.
-
-### Computador 1: servidor
-
-Com o projeto atualizado:
-
-```bash
-docker compose down
-docker compose build --no-cache
-docker compose up -d servidor
-```
-
-Descubra o IPv4 da interface conectada à rede.
-
-Windows:
-
-```powershell
-ipconfig
-```
-
-Linux:
+Descubra o IPv4 de cada computador:
 
 ```bash
 hostname -I
+ip -4 addr
 ```
 
-Libere a porta TCP 8080 no firewall. Evite endereços de interfaces virtuais do Docker.
+Escolha o endereço da interface conectada à rede do laboratório. Não use `127.0.0.1`, o endereço de uma interface Docker ou um IP de exemplo sem substituí-lo.
 
-### Computador 2: clientes em Docker
+Este guia usará:
 
-Copie o projeto para o computador cliente e construa a imagem:
+| Computador | Empresa | Identificador no código | IPv4 de exemplo |
+|---|---|---|---|
+| 1 | VaiJunto | `vaijunto` | `192.168.1.10` |
+| 2 | Minas | `minas` | `192.168.1.11` |
+| 3 | São Paulo | `sao-paulo` | `192.168.1.12` |
+
+**Substitua esses três IPs em todos os comandos pelos IPs reais.** O identificador de cada empresa precisa ser o mesmo em `-empresa` e nas listas `-pares`.
+
+Os três computadores podem usar 8080 e 8081 simultaneamente: endereços IP diferentes não disputam a mesma porta. O conflito ocorre quando outro processo já ocupa aquela porta no mesmo endereço do mesmo computador.
+
+Confira as portas locais:
 
 ```bash
-docker compose build
+ss -ltn '( sport = :8080 or sport = :8081 )'
 ```
 
-Não inicie outro serviço `servidor`. Configure o IP real do computador 1.
+Os computadores precisam se alcançar pela rede. Libere as portas publicadas no firewall conforme a configuração do laboratório; HTTP não abre portas bloqueadas automaticamente.
 
-PowerShell:
+## 3. Compilar a imagem Docker
 
-```powershell
-$env:VAIJUNTO_SERVIDOR = "192.168.1.10:8080"
-docker compose run --rm passageiro
-```
-
-Linux:
+Execute em **cada computador**, na pasta do projeto:
 
 ```bash
-export VAIJUNTO_SERVIDOR=192.168.1.10:8080
-docker compose run --rm passageiro
+docker build -t vaijunto:local .
 ```
 
-Para abrir o cliente motorista:
+O Dockerfile executa testes com detector de corridas, executa `go vet` e compila os quatro programas. Se a construção falhar, corrija a falha antes de iniciar os contêineres.
+
+Defina o **mesmo token** nos três computadores:
 
 ```bash
-docker compose run --rm motorista
+export VAIJUNTO_TOKEN_CONSORCIO='token-demonstracao-consorcio-2026'
 ```
 
-Use o IP da máquina do servidor, não `localhost` nem o IP interno do contêiner.
+Esse é um token de demonstração com mais de 16 caracteres. Ele autentica a comunicação entre empresas; não é a senha de um passageiro. Cada terminal tem seu próprio ambiente: repita o `export` ao abrir outro terminal que precise do token.
 
-### Cliente remoto sem Docker
+## 4. Iniciar uma empresa em cada computador
 
-Se o computador cliente tiver Go instalado:
+Execute somente o comando da empresa correspondente a cada computador. Os comandos abaixo deixam o servidor em primeiro plano, mostrando os logs. Use outro terminal para executar clientes.
+
+### Computador 1 — VaiJunto
 
 ```bash
-go run ./cmd/cliente_passageiro -servidor 192.168.1.10:8080
+docker run --rm --name vaijunto -v vaijunto-dados:/dados \
+  -p 8080:8080 -p 8081:8081 \
+  -e VAIJUNTO_TOKEN_CONSORCIO="$VAIJUNTO_TOKEN_CONSORCIO" \
+  vaijunto:local \
+  -empresa vaijunto \
+  -endereco :8080 \
+  -rest :8081 \
+  -pares 'minas=http://192.168.1.11:8081,sao-paulo=http://192.168.1.12:8081'
+```
+
+### Computador 2 — Minas
+
+```bash
+docker run --rm --name minas -v minas-dados:/dados \
+  -p 8080:8080 -p 8081:8081 \
+  -e VAIJUNTO_TOKEN_CONSORCIO="$VAIJUNTO_TOKEN_CONSORCIO" \
+  vaijunto:local \
+  -empresa minas \
+  -endereco :8080 \
+  -rest :8081 \
+  -pares 'vaijunto=http://192.168.1.10:8081,sao-paulo=http://192.168.1.12:8081'
+```
+
+### Computador 3 — São Paulo
+
+```bash
+docker run --rm --name sao-paulo -v sao-paulo-dados:/dados \
+  -p 8080:8080 -p 8081:8081 \
+  -e VAIJUNTO_TOKEN_CONSORCIO="$VAIJUNTO_TOKEN_CONSORCIO" \
+  vaijunto:local \
+  -empresa sao-paulo \
+  -endereco :8080 \
+  -rest :8081 \
+  -pares 'vaijunto=http://192.168.1.10:8081,minas=http://192.168.1.11:8081'
+```
+
+O terminal deve mostrar a identidade da empresa e os endereços TCP e REST. Inicie as três empresas antes da demonstração de reservas distribuídas.
+
+Nos comandos Bash, a barra `\` precisa ser o último caractere da linha, sem espaços depois dela.
+
+### Significado das opções
+
+| Opção | Função |
+|---|---|
+| `--name` | Nome local do contêiner, usado em comandos como `docker pause` |
+| `-p 8080:8080` | Publica a porta TCP do contêiner no computador |
+| `-p 8081:8081` | Publica a API REST |
+| `-empresa` | Identidade da empresa dentro do consórcio |
+| `-endereco :8080` | Escuta TCP em todas as interfaces do contêiner |
+| `-rest :8081` | Escuta HTTP em todas as interfaces do contêiner |
+| `-pares` | Identidades e URLs REST das outras duas empresas |
+| `-timeout-rest` | Prazo de uma chamada a outra empresa; padrão de 3 segundos |
+| `-backup` | Arquivo privado de recuperação; padrão `dados/EMPRESA.json` fora do Docker |
+
+No laboratório com computadores distintos, os pares usam os IPs dos **computadores**, não nomes de serviços de uma rede Docker local.
+
+## 5. Verificar a comunicação
+
+Em um terminal Linux com o token definido, consulte as três empresas:
+
+```bash
+curl --fail --show-error \
+  -H "Authorization: Bearer $VAIJUNTO_TOKEN_CONSORCIO" \
+  http://192.168.1.10:8081/distribuido/saude
+
+curl --fail --show-error \
+  -H "Authorization: Bearer $VAIJUNTO_TOKEN_CONSORCIO" \
+  http://192.168.1.11:8081/distribuido/saude
+
+curl --fail --show-error \
+  -H "Authorization: Bearer $VAIJUNTO_TOKEN_CONSORCIO" \
+  http://192.168.1.12:8081/distribuido/saude
+```
+
+Cada resposta contém `empresa_id` e `geracao`. A geração identifica o histórico de coordenação da empresa e é preservada quando ela reinicia com seu backup íntegro.
+
+Peça ao VaiJunto para consultar o consórcio:
+
+```bash
+curl --fail --show-error \
+  -H "Authorization: Bearer $VAIJUNTO_TOKEN_CONSORCIO" \
+  http://192.168.1.10:8081/consorcio/trechos
+```
+
+Antes de publicar caronas, é esperado que `trechos` esteja vazio. A lista `empresas_indisponiveis` deve estar vazia quando todos os participantes responderem.
+
+## 6. Executar os clientes
+
+Os programas de cliente já estão na imagem. Abra outro terminal e escolha o servidor da empresa do usuário.
+
+Motorista, com escolha da empresa no início:
+
+```bash
+docker run --rm -it \
+  --entrypoint /bin/cliente_motorista \
+  vaijunto:local \
+  -vaijunto 192.168.1.10:8080 \
+  -minas 192.168.1.11:8080 \
+  -sao-paulo 192.168.1.12:8080
+```
+
+Passageiro, com a mesma escolha:
+
+```bash
+docker run --rm -it \
+  --entrypoint /bin/cliente_passageiro \
+  vaijunto:local \
+  -vaijunto 192.168.1.10:8080 \
+  -minas 192.168.1.11:8080 \
+  -sao-paulo 192.168.1.12:8080
+```
+
+Ao iniciar, escolha `1 - VAIJUNTO`, `2 - Minas` ou `3 - São Paulo`. Depois, crie a conta ou entre na empresa escolhida. Para acesso direto, `-servidor IP:porta` continua disponível e dispensa essa seleção.
+
+Em uma execução com Go no mesmo computador, sem informar endereços, o menu usa `localhost:7001`, `localhost:7002` e `localhost:7003`, as portas do Compose. Abra os clientes em terminais separados:
+
+```bash
+go run ./cmd/cliente_motorista
+go run ./cmd/cliente_passageiro
+```
+
+Também é possível configurar os endereços por `VAIJUNTO_SERVIDOR_VAIJUNTO`, `VAIJUNTO_SERVIDOR_MINAS` e `VAIJUNTO_SERVIDOR_SAO_PAULO`. São endereços TCP completos, como `192.168.1.10:8080`.
+
+O endereço precisa ser o IP do computador servidor. Dentro de um contêiner de cliente, `localhost` apontaria para o próprio contêiner de cliente.
+
+No menu, crie uma conta ou autentique-se. O cadastro inicia a sessão automaticamente. A conta pertence somente à empresa em que foi criada. A senha deve ter de 8 a 128 caracteres; neste protótipo ela fica visível no terminal e é guardada em texto puro, inclusive no backup local. Use contas e senhas de demonstração.
+
+A sessão dura 15 minutos. Fechar uma conexão TCP não encerra a sessão; sair pelo menu revoga a sessão.
+
+## 7. Demonstrar uma viagem entre empresas
+
+Crie um motorista em cada empresa e publique uma oferta em cada servidor. Use uma data futura igual para todos os trechos. O exemplo usa **01/10/2099**, aceito pelo sistema para evitar que o horário da apresentação torne as ofertas indisponíveis.
+
+| Empresa | Origem | Destino | Partida | Viagem | Preço por pessoa | Vagas |
+|---|---|---|---|---|---|---|
+| VaiJunto | Salvador | Feira de Santana | 08:00 | 60 minutos | 20,00 | 1 |
+| São Paulo | Feira de Santana | Vitória da Conquista | 09:30 | 180 minutos | 40,00 | 1 |
+| Minas | Vitória da Conquista | Montes Claros | 13:00 | 240 minutos | 60,00 | 1 |
+
+Informe duas cidades por oferta e uma distância positiva. Como cada oferta termina na segunda cidade, não há parada intermediária. O horário informado pela interface usa o fuso `-03:00`.
+
+Depois:
+
+1. Abra o cliente passageiro apontando para o **VaiJunto**.
+2. Crie uma conta de passageiro nessa empresa.
+3. Escolha buscar itinerário.
+4. Informe `Salvador`, `Montes Claros` e `01/10/2099`.
+5. Selecione a opção com os três trechos e confirme.
+6. Confira a reserva em **Minhas reservas**.
+7. Nos três clientes motorista, consulte as caronas e a ocupação dos respectivos trechos.
+
+O passageiro não precisa criar contas nas outras empresas. O servidor de origem combina as ofertas e coordena a reserva. Uma reserva global só aparece como `ATIVA` depois da aplicação em todos os donos dos trechos. Se a decisão ou aplicação ainda estiver pendente, a interface mostra `PENDENTE`.
+
+Com uma vaga por trecho, uma segunda tentativa para a mesma viagem não deve confirmar outro passageiro nos mesmos assentos. Cancele a reserva antes da partida para demonstrar a devolução das vagas nas três empresas.
+
+## 8. Executar o simulador de carga
+
+O simulador cria usuários e ofertas próprios, faz buscas e disputa reservas a partir dos três servidores. Execute de um computador com a imagem e acesso à rede:
+
+```bash
+docker run --rm \
+  --entrypoint /bin/carga \
+  vaijunto:local \
+  -servidores 192.168.1.10:8080,192.168.1.11:8080,192.168.1.12:8080 \
+  -clientes 100 \
+  -vagas 5
+```
+
+As três URLs acima são endereços **TCP dos clientes**, sem `http://`.
+
+A saída é JSON com quantidade de buscas, confirmações, recusas, pendências, erros de transporte, duração, latências, requisições por segundo e indicador `integridade`.
+
+A integridade compara as transações confirmadas com a ocupação de cada empresa e verifica ausência de assentos duplicados ou segmentos confirmados fora dos resultados esperados. Tentativas concorrentes podem ser abortadas sem consumir todas as vagas; não se exige uma taxa artificial de confirmações. O simulador retorna erro se encontrar inconsistência, pendências não resolvidas ou falhas de transporte.
+
+Limites: de 1 a 200 clientes e de 1 a 100 vagas por trecho. O token REST não precisa ser passado ao simulador: ele atua como clientes TCP, e cada servidor usa sua própria configuração REST.
+
+## 9. Demonstrar falhas de comunicação
+
+Para simular indisponibilidade **preservando a RAM**, no computador da Minas execute em outro terminal:
+
+```bash
+docker pause minas
+```
+
+Durante a pausa:
+
+- Consultas podem retornar apenas as empresas disponíveis.
+- Reservas inteiramente locais das outras empresas continuam funcionando.
+- Uma reserva que precisa de um trecho da Minas não pode ser concluída sem a participação necessária.
+- Operações já iniciadas são tratadas pelo protocolo de decisão e recuperação; timeout sozinho não libera vagas.
+
+Para retomar o mesmo processo:
+
+```bash
+docker unpause minas
+```
+
+Acompanhe os logs e consulte as reservas novamente. O ciclo de recuperação roda periodicamente; operações sem decisão iniciam recuperação após um intervalo de suspeita de aproximadamente 10 segundos. O tempo total depende dos prazos de rede e da disponibilidade de uma maioria.
+
+Os testes automatizados injetam falhas nos pontos de preparação e decisão para verificar os cenários mais difíceis de reproduzir manualmente.
+
+`docker stop` e `docker kill` encerram o processo. Ao iniciar novamente com o mesmo volume, identidade e token, a empresa carrega o backup e retoma a recuperação das transações. Os usuários precisam entrar novamente; suas contas e reservas permanecem.
+
+## Backup local e recuperação
+
+Cada empresa grava somente seu estado e seus registros de coordenação. No Docker, o arquivo é `/dados/estado.json`. Os exemplos usam um volume diferente para cada empresa: `vaijunto-dados`, `minas-dados` e `sao-paulo-dados`. O Compose usa os volumes separados `dados-a`, `dados-b` e `dados-c`, associados ao nome do projeto.
+
+Fora do Docker, o padrão é `dados/EMPRESA.json`. Use `-backup caminho/arquivo.json` ou `VAIJUNTO_BACKUP` para escolher outro arquivo. Uma execução com `-backup=` funciona apenas em RAM. Execute somente um processo por arquivo de backup.
+
+Depois de cada escrita, o servidor salva uma fotografia do estado. As etapas REST de preparação, promessa, aceitação e aplicação também são salvas antes da resposta de sucesso. O arquivo inclui vagas ocupadas e preparadas, chaves de repetição, reservas, notificações, relógio lógico e decisões. Sessões de login são temporárias e não são restauradas.
+
+A gravação usa um arquivo temporário, sincronização com o disco e substituição do arquivo anterior. A abertura valida versão, empresa e checksum. A recuperação distribuída exige os mesmos participantes e token. Um arquivo inválido impede a inicialização e é preservado para análise; o servidor não começa vazio silenciosamente.
+
+Para testar uma queda real no cenário de um computador, no Linux ou no Windows:
+
+```bash
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml kill -s SIGKILL empresa-b
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml start empresa-b
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml logs --tail 50 empresa-b
+```
+
+Entre novamente na conta da Minas e consulte as caronas e reservas. Durante a queda, uma reserva confirmada continua aparecendo no servidor de origem, com a empresa indisponível indicada. Uma preparação ainda sem decisão será resolvida pelo protocolo após a recuperação; ela não é liberada apenas por timeout.
+
+Em computadores separados, um contêiner iniciado com `--rm` será removido após a queda: repita seu comando `docker run`, preservando o mesmo volume. O backup protege contra encerramento do processo, desde que o arquivo atual permaneça íntegro. Perder o disco ou restaurar manualmente uma cópia antiga não equivale a essa recuperação.
+
+`docker compose down` preserva os volumes. Para apagar o ambiente de demonstração e seus dados, use `docker compose -p laboratorio-arthur -f compose.consorcio.yaml down -v` somente quando quiser começar do zero nas três empresas.
+
+## Portas ocupadas e seleção automática
+
+### Alterar a porta publicada no Docker
+
+Se a porta REST 8081 estiver ocupada no computador da Minas, use neste computador:
+
+```bash
+-p 9001:8081
+```
+
+Mantenha `-rest :8081` dentro do contêiner. Nos comandos das **outras duas empresas**, troque a URL da Minas por:
+
+```text
+minas=http://192.168.1.11:9001
+```
+
+Se trocar a publicação TCP para `-p 9000:8080`, os clientes da Minas devem usar `192.168.1.11:9000`. Essa mudança não afeta as URLs REST.
+
+### Pedir portas externas livres ao Docker
+
+Na execução de uma empresa, substitua as publicações fixas por:
+
+```bash
+-p 0:8080 -p 0:8081
+```
+
+Depois descubra as portas publicadas, por exemplo para a Minas:
+
+```bash
+docker port minas 8080/tcp
+docker port minas 8081/tcp
+```
+
+Use a porta TCP efetiva nos clientes e a REST efetiva nos `-pares` dos outros servidores. A aplicação não tem descoberta automática dos novos endereços. Para preparar uma apresentação com portas aleatórias, descubra as três portas REST e inicie novamente os servidores com essas portas publicadas explicitamente e os pares corrigidos. Preserve os volumes de backup ao recriar os contêineres.
+
+Para o cenário com três computadores, portas conhecidas e livres simplificam a configuração. Não é necessário alterar `rede.go`: flags e variáveis de ambiente substituem os padrões.
+
+## Executar sem Docker
+
+Esta opção serve para desenvolvimento. Para o cenário solicitado pelo enunciado, use um contêiner por computador.
+
+Com Go 1.27.0 e o código em cada máquina, defina o token comum e execute o comando correspondente:
+
+```bash
+export VAIJUNTO_TOKEN_CONSORCIO='token-demonstracao-consorcio-2026'
+```
+
+VaiJunto:
+
+```bash
+go run ./cmd/servidor \
+  -empresa vaijunto -endereco :8080 -rest :8081 \
+  -pares 'minas=http://192.168.1.11:8081,sao-paulo=http://192.168.1.12:8081'
+```
+
+Minas:
+
+```bash
+go run ./cmd/servidor \
+  -empresa minas -endereco :8080 -rest :8081 \
+  -pares 'vaijunto=http://192.168.1.10:8081,sao-paulo=http://192.168.1.12:8081'
+```
+
+São Paulo:
+
+```bash
+go run ./cmd/servidor \
+  -empresa sao-paulo -endereco :8080 -rest :8081 \
+  -pares 'vaijunto=http://192.168.1.10:8081,minas=http://192.168.1.11:8081'
+```
+
+Clientes e carga:
+
+```bash
 go run ./cmd/cliente_motorista -servidor 192.168.1.10:8080
+go run ./cmd/cliente_passageiro -servidor 192.168.1.10:8080
+go run ./cmd/carga -servidores 192.168.1.10:8080,192.168.1.11:8080,192.168.1.12:8080 -clientes 100 -vagas 5
 ```
 
-No Windows, teste a conexão com:
+O padrão dos clientes em `internal/configuracao/rede.go` é `localhost:8080`. Isso só aponta para o servidor local quando o cliente roda diretamente nesse computador. Para outra máquina, informe seu IP.
 
-```powershell
-Test-NetConnection 192.168.1.10 -Port 8080
-```
-
-O campo `TcpTestSucceeded` deve ser `True`.
-
-### Acessar vários computadores por SSH
-
-Com o serviço SSH habilitado nas máquinas do laboratório e uma conta válida, abra um terminal separado para cada acesso. Substitua `usuario` pelo seu login e ajuste os nomes das máquinas:
+Para escolher uma porta TCP livre automaticamente:
 
 ```bash
-ssh usuario@ladica01
+go run ./cmd/servidor -endereco :0
 ```
 
-No computador `ladica01`, entre na pasta do projeto e mantenha o servidor aberto:
+A porta efetiva aparece no terminal; informe-a em `-servidor`. Esse comando isolado inicia somente o atendimento local. Para habilitar o consórcio, inclua também identidade, REST, token e pares. `-rest :0` também escolhe uma porta livre, que precisa ser comunicada aos demais.
+
+## Três empresas no mesmo computador
+
+Este roteiro executa três servidores isolados no mesmo computador, usando `compose.consorcio.yaml`. Não é necessário instalar Go para os passos com Docker. A apresentação principal continua sendo em computadores diferentes.
+
+| Serviço Docker | Empresa representada | TCP no computador | REST no computador |
+|---|---|---|---|
+| empresa-a | VaiJunto | localhost:7001 | http://localhost:8001 |
+| empresa-b | Minas | localhost:7002 | http://localhost:8002 |
+| empresa-c | São Paulo | localhost:7003 | http://localhost:8003 |
+
+Os nomes internos desse Compose são `empresa-a`, `empresa-b` e `empresa-c`. Os registros e respostas mostrarão essas identidades. O menu dos clientes apresenta VAIJUNTO, Minas e São Paulo e usa os endereços internos já definidos no Compose. Escolha 1, 2 ou 3 conforme a conta que deseja usar. Execute todos os comandos na pasta do projeto; use o mesmo nome de projeto `laboratorio-arthur` em todos eles.
+
+**Passo 1 — Iniciar as três empresas.** Com o Docker em execução:
 
 ```bash
-cd ~/VAIJUNTO-main
-go run ./cmd/servidor -endereco :8080
+export VAIJUNTO_TOKEN_CONSORCIO='token-demonstracao-consorcio-2026'
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml up --build -d
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml ps
 ```
 
-Em outro terminal, conecte-se ao segundo computador e execute o motorista apontando para o servidor central:
+Confira se os três serviços estão em execução. Acompanhe os logs quando necessário:
 
 ```bash
-ssh usuario@ladica02
-cd ~/VAIJUNTO-main
-go run ./cmd/cliente_motorista -servidor ladica01:8080
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml logs --tail=50
 ```
 
-Em um terceiro terminal, execute o passageiro em outra máquina:
+**Passo 2 — Conferir os catálogos e a comunicação.**
 
 ```bash
-ssh usuario@ladica03
-cd ~/VAIJUNTO-main
-go run ./cmd/cliente_passageiro -servidor ladica01:8080
+curl --fail --show-error -H "Authorization: Bearer $VAIJUNTO_TOKEN_CONSORCIO" http://localhost:8001/consorcio/trechos
 ```
 
-Ajuste a pasta para onde copiou o projeto. Se os nomes não forem resolvidos pela rede, use os IPs correspondentes. Também é possível abrir várias conexões `ssh usuario@ladica01` em terminais diferentes e executar os clientes com `-servidor 127.0.0.1:8080`; nesse caso, todos os programas rodam na mesma máquina remota. Use `exit` para encerrar cada acesso SSH.
+Antes de publicar ofertas, `trechos` deve estar vazio. `empresas_indisponiveis` deve estar vazio se as outras duas APIs responderem. Se as portas externas foram alteradas, ajuste o endereço da consulta.
 
-## Exemplo de utilização
-
-Cadastre dois motoristas com e-mails diferentes e um passageiro. Use a mesma data futura nas duas ofertas.
-
-| Campo | Motorista Ana | Motorista Bruno |
-| :--- | :--- | :--- |
-| Rota | Salvador → Feira de Santana | Feira de Santana → Serrinha |
-| Partida | 08:00 | 10:30 |
-| Vagas | 2 | 2 |
-| Distância | 100 km | 80 km |
-| Tempo de viagem | 120 minutos | 60 minutos |
-| Parada | Não se aplica: destino final | Não se aplica: destino final |
-| Preço escolhido por trecho | R$ 50,00 | R$ 40,00 |
-
-1. Publique as duas caronas nos respectivos clientes motorista.
-2. No passageiro, busque Salvador → Serrinha na data escolhida.
-3. Selecione o itinerário com os dois motoristas.
-4. Confirme a reserva e consulte as caronas dos motoristas.
-5. Cancele a reserva e confira a devolução das vagas.
-6. Faça outra reserva e cancele um trecho pelo motorista antes da partida.
-7. Consulte a notificação e a reserva cancelada no passageiro.
-
-A primeira carona chega às 10:00 e a segunda sai às 10:30: os 30 minutos são espera pela conexão, não uma parada obrigatória no destino da primeira carona. A duração total é de 3h30.
-
-Se a busca não apresentar o itinerário, confira data, horários, vagas e se a partida ainda está no futuro.
-
-### Reservar enquanto o motorista está viajando
-
-Uma carona Serrinha → Feira de Santana → Salvador sai de Serrinha às 08:00. Com 60 minutos de viagem e 10 minutos de parada em Feira, o trecho Feira → Salvador sai às 09:10. Ele pode ser encontrado e reservado durante a viagem anterior e durante a parada, até antes das 09:10, se houver vagas. Às 09:10 a reserva desse trecho é recusada. O trecho Serrinha → Feira fica indisponível para novas reservas desde as 08:00.
-
-A busca é única e apresenta os itinerários em ordem crescente do horário de partida do primeiro trecho. A confirmação verifica novamente o horário e as vagas de todos os trechos.
-
-## Como o sistema funciona
-
-### TCP e separação de responsabilidades
-
-O TCP fornece entrega ordenada de bytes, mas não delimita mensagens. Por isso cada objeto JSON termina com uma quebra de linha. O protocolo define as estruturas; o transporte cuida dos sockets e prazos; o roteador valida as mensagens; o gerenciador aplica as regras; os clientes apresentam os menus. Não há chamadas HTTP/RPC nem acesso direto dos clientes ao estado.
-
-O servidor atende cada conexão em uma goroutine, até 256 conexões simultâneas. Mensagens da mesma conexão são sequenciais. O prazo de leitura/escrita evita que conexões ociosas ocupem recursos indefinidamente; ele não é um limite de duração do algoritmo de busca. As travas do estado são liberadas antes do envio da resposta pela rede.
-
-### Reservas e concorrência
-
-O estado compartilhado usa um único `sync.RWMutex`. Na confirmação, o servidor adquire a trava exclusiva, valida **todos** os trechos e escolhe as vagas antes de modificar qualquer um deles. Somente após todas as verificações registra a reserva e ocupa as vagas. Uma falha de validação deixa todos os trechos intactos. Cancelamentos e devoluções de vagas também acontecem sob essa trava.
-
-A trava global mantém caronas, reservas, vagas e notificações consistentes. As alterações são executadas uma por vez, inclusive em rotas independentes. A ordem de aquisição da trava não garante atendimento por ordem de chegada.
-
-Consultas usam a trava de leitura. A busca copia os trechos disponíveis sob essa trava e explora a cópia depois de liberá-la. Assim, uma busca não bloqueia alterações durante toda a exploração, mas seu resultado pode ficar desatualizado: a confirmação sempre revalida as vagas. Buscar não significa reservar.
-
-### Busca de itinerários
-
-Cada cidade é um vértice e cada trecho publicado é uma aresta direcionada independente. Isso preserva ofertas paralelas de vários motoristas. A busca em profundidade (DFS) combina trechos respeitando vagas, cidades e horários, sem repetir cidades no mesmo caminho.
-
-Para controlar o crescimento combinatório, a busca examina no máximo 50000 arestas, encontra até 100 itinerários e usa no máximo 12 trechos por padrão (configurável de 1 a 20). Quando a exploração é limitada, a resposta informa `limitada: true`. A ordenação pelo horário de partida do primeiro trecho vale para os caminhos encontrados; nesse caso, não garante a melhor opção entre todos os caminhos possíveis.
-
-O preço de cada trecho é escolhido pelo motorista, com até duas casas decimais; o total da reserva é somado em centavos. A duração vai da primeira partida até a chegada final, incluindo esperas nas conexões. Paradas são informadas somente nas cidades intermediárias de cada carona: a última cidade encerra o percurso e sempre tem parada zero, inclusive para ofertas recebidas de clientes antigos.
-
-### Falhas de comunicação
-
-Publicações e confirmações usam uma chave de idempotência por usuário e operação. Se a conexão cair depois da execução, repetir os mesmos dados e a mesma chave não duplica o recurso. Isso não é persistência: reiniciar o servidor perde o estado e as chaves. Também não há replicação, tolerância à queda do servidor central ou criptografia TLS no transporte; use senhas de demonstração.
-
-Os testes automatizados verificam regras, protocolo, concorrência, atomicidade e falhas. O programa de carga cria vários passageiros simulados para disputar as mesmas vagas e apresenta confirmações, recusas, latência e integridade ao final.
-
-## Estrutura do projeto
-
-| Pasta ou arquivo | Conteúdo |
-| :--- | :--- |
-| `cmd/servidor` | Inicialização do servidor TCP |
-| `cmd/cliente_motorista` | Inicialização do cliente motorista |
-| `cmd/cliente_passageiro` | Inicialização do cliente passageiro |
-| `cmd/carga` | Programa para simular vários clientes concorrentes |
-| `internal/servidor` | Grafo, reservas, autenticação, roteamento e atendimento TCP |
-| `internal/cliente` | Menus, entrada de dados e comunicação dos clientes |
-| `internal/configuracao/rede.go` | Endereços padrão de cliente e servidor |
-| `internal/protocolo` | Estruturas, validações e documentação do protocolo |
-| `internal/carga` | Execução e medição do teste de carga |
-| `testes` | Testes de integração, concorrência e falhas |
-| `Dockerfile` | Testes, compilação e montagem da imagem |
-| `compose.yaml` | Serviços e publicação da porta do servidor |
-
-## Testes automatizados
-
-A suíte verifica validação de dados, autenticação, busca, reservas, cancelamentos, concorrência e falhas de comunicação. Também inclui o fluxo completo dos menus pelo TCP.
-
-Os testes criam seus próprios servidores e dados; não é necessário iniciar o servidor manualmente.
-
-### Testes locais
+**Passo 3 — Abrir os motoristas.** Abra três terminais diferentes e execute uma linha em cada um:
 
 ```bash
-go test -count=1 ./...
+# VaiJunto
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec empresa-a /bin/cliente_motorista
+
+# Minas
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec empresa-b /bin/cliente_motorista
+
+# São Paulo
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec empresa-c /bin/cliente_motorista
+```
+
+Aqui `exec` abre o cliente dentro de um contêiner. O menu usa os nomes internos `empresa-a:8080`, `empresa-b:8080` e `empresa-c:8080`, configurados no Compose, sem depender das portas publicadas no computador.
+
+Crie uma conta de motorista em cada empresa e publique as ofertas do exemplo da seção 7: Salvador → Feira no VaiJunto, Feira → Vitória da Conquista na empresa São Paulo e Vitória da Conquista → Montes Claros na Minas. Use a mesma data futura, horários compatíveis e uma vaga por trecho.
+
+**Passo 4 — Abrir os passageiros.** Para um passageiro do VaiJunto:
+
+```bash
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec empresa-a /bin/cliente_passageiro
+```
+
+Crie a conta, busque Salvador → Montes Claros na data publicada e confirme o itinerário. Confira a reserva em Minhas reservas e a ocupação nos três motoristas.
+
+Para testar outra origem de requisições, abra outro terminal e conecte um passageiro da Minas:
+
+```bash
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec empresa-b /bin/cliente_passageiro
+```
+
+Com a única vaga já confirmada, a segunda reserva não deve confirmar os mesmos assentos. Para disputar a vaga simultaneamente, deixe dois passageiros com resultados de busca obtidos antes da confirmação e tente confirmar nos dois terminais. Use o simulador para concorrência automatizada.
+
+Cancele a primeira reserva pelo passageiro e confira a devolução nos três motoristas. Depois faça nova reserva e teste o cancelamento de uma oferta pelo motorista, verificando o cancelamento da viagem inteira e o aviso ao passageiro.
+
+**Passo 5 — Executar a carga nas três empresas.** O simulador cria contas e caronas próprias:
+
+```bash
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec -T empresa-a /bin/carga -servidores empresa-a:8080,empresa-b:8080,empresa-c:8080 -clientes 100 -vagas 5
+```
+
+Os nomes acima são resolvidos na rede interna do Docker. Confira o JSON de métricas, especialmente `integridade`, `pendentes` e `erros_transporte`.
+
+**Passo 6 — Testar a indisponibilidade de uma empresa preservando a RAM.** Pause a Minas:
+
+```bash
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml pause empresa-b
+```
+
+Faça uma busca no passageiro do VaiJunto e observe a indicação de empresa indisponível. Uma viagem nova que exige a Minas não deve ser confirmada sem ela. Para testar independência, publique e reserve também uma carona inteiramente local no VaiJunto.
+
+Retome o mesmo processo:
+
+```bash
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml unpause empresa-b
+```
+
+Consulte as reservas e as vagas novamente. Para falhas durante pontos específicos de uma reserva, use os testes automatizados de injeção de falhas; pausar manualmente antes de iniciar uma reserva não reproduz todos esses pontos.
+
+**Passo 7 — Executar os testes automatizados, caso Go esteja instalado no computador.**
+
+```bash
+go test ./...
+go test ./internal/servidor -run 'TestConsorcio|TestBackup|TestConsulta' -v -count=1 -timeout=120s
 go vet ./...
 ```
 
-Para mostrar cada teste:
+A construção da imagem também executa os testes. Os testes automatizados usam suas próprias instâncias temporárias e não modificam os dados dos contêineres da demonstração.
+
+**Passo 8 — Encerrar o ambiente.** Saia dos menus e execute:
 
 ```bash
-go test -count=1 -v ./...
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml down
 ```
 
-Para usar o detector de condições de corrida:
+Esse comando encerra os três servidores e preserva os volumes de backup. Ao executar novamente o passo 1, os dados serão carregados; entre novamente nas contas. Para começar do zero nas três empresas, acrescente `-v` ao comando `down`.
+
+**Portas ocupadas no teste local.** Para pedir portas externas livres, configure antes de iniciar:
 
 ```bash
-go test -race -count=1 ./...
+export VAIJUNTO_TCP_A=0 VAIJUNTO_TCP_B=0 VAIJUNTO_TCP_C=0
+export VAIJUNTO_REST_A=0 VAIJUNTO_REST_B=0 VAIJUNTO_REST_C=0
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml up --build -d
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml port empresa-a 8080
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml port empresa-a 8081
 ```
 
-O comando com `-race` exige CGO habilitado e um compilador C compatível. O estágio `testes` do Dockerfile já configura esse ambiente.
+Os clientes e a carga executados com `exec` continuam usando as mesmas portas internas. Apenas consultas e clientes executados fora dos contêineres precisam das portas publicadas reais. Para voltar aos valores padrão em outro teste, remova essas variáveis do ambiente antes de iniciar. Não recrie os contêineres durante uma demonstração cujos dados deseja preservar.
 
-Teste pelo Docker, sem cache:
+## Executar no Windows com PowerShell
+
+Esta é uma alternativa para desenvolvimento ou execução fora do laboratório. **Linux continua sendo o caminho principal da apresentação.** A arquitetura, os IPs de exemplo, as regras de reserva e o backup local são os mesmos descritos acima.
+
+### 1. Preparar o ambiente e descobrir os IPs
+
+Tenha o Docker Desktop em execução, configurado para **contêineres Linux**, pois o Dockerfile gera executáveis Linux. Abra o PowerShell na pasta do projeto e confira:
+
+```powershell
+docker version
+ipconfig
+```
+
+No `ipconfig`, encontre o IPv4 da interface conectada à rede. Substitua os IPs de exemplo dos três computadores nos comandos seguintes:
+
+| Empresa | Identificador | IP de exemplo |
+|---|---|---|
+| VaiJunto | `vaijunto` | `192.168.1.10` |
+| Minas | `minas` | `192.168.1.11` |
+| São Paulo | `sao-paulo` | `192.168.1.12` |
+
+As portas TCP 8080 e REST 8081 precisam estar acessíveis no firewall do Windows e na rede usada. Se estiverem ocupadas localmente, use o procedimento de troca de portas explicado na seção principal.
+
+### 2. Compilar e definir o token
+
+Execute em cada computador Windows:
+
+```powershell
+docker build -t vaijunto:local .
+$env:VAIJUNTO_TOKEN_CONSORCIO = 'token-demonstracao-consorcio-2026'
+```
+
+Use o mesmo token nas três empresas. Repita a definição de `$env:VAIJUNTO_TOKEN_CONSORCIO` nos novos terminais que precisarem desse valor. No PowerShell, a continuação de linha usa o acento grave `` ` ``, e não a barra invertida do Bash. Ele precisa ser o último caractere da linha, sem espaços depois.
+
+### 3. Iniciar a empresa correspondente
+
+Execute apenas o comando da empresa daquele computador. Deixe o terminal aberto e use outros terminais para os clientes.
+
+**Computador do VaiJunto:**
+
+```powershell
+docker run --rm --name vaijunto -v vaijunto-dados:/dados `
+  -p 8080:8080 -p 8081:8081 `
+  -e "VAIJUNTO_TOKEN_CONSORCIO=$env:VAIJUNTO_TOKEN_CONSORCIO" `
+  vaijunto:local `
+  -empresa vaijunto `
+  -endereco :8080 -rest :8081 `
+  -pares 'minas=http://192.168.1.11:8081,sao-paulo=http://192.168.1.12:8081'
+```
+
+**Computador da Minas:**
+
+```powershell
+docker run --rm --name minas -v minas-dados:/dados `
+  -p 8080:8080 -p 8081:8081 `
+  -e "VAIJUNTO_TOKEN_CONSORCIO=$env:VAIJUNTO_TOKEN_CONSORCIO" `
+  vaijunto:local `
+  -empresa minas `
+  -endereco :8080 -rest :8081 `
+  -pares 'vaijunto=http://192.168.1.10:8081,sao-paulo=http://192.168.1.12:8081'
+```
+
+**Computador da empresa São Paulo:**
+
+```powershell
+docker run --rm --name sao-paulo -v sao-paulo-dados:/dados `
+  -p 8080:8080 -p 8081:8081 `
+  -e "VAIJUNTO_TOKEN_CONSORCIO=$env:VAIJUNTO_TOKEN_CONSORCIO" `
+  vaijunto:local `
+  -empresa sao-paulo `
+  -endereco :8080 -rest :8081 `
+  -pares 'vaijunto=http://192.168.1.10:8081,minas=http://192.168.1.11:8081'
+```
+
+### 4. Verificar a comunicação
+
+Em outro PowerShell, com o token definido:
+
+```powershell
+$cabecalhos = @{ Authorization = "Bearer $env:VAIJUNTO_TOKEN_CONSORCIO" }
+Invoke-RestMethod 'http://192.168.1.10:8081/distribuido/saude' -Headers $cabecalhos
+Invoke-RestMethod 'http://192.168.1.11:8081/distribuido/saude' -Headers $cabecalhos
+Invoke-RestMethod 'http://192.168.1.12:8081/distribuido/saude' -Headers $cabecalhos
+Invoke-RestMethod 'http://192.168.1.10:8081/consorcio/trechos' -Headers $cabecalhos
+```
+
+Para conferir se uma porta remota aceita conexões:
+
+```powershell
+Test-NetConnection 192.168.1.11 -Port 8081
+```
+
+Esse teste verifica a conexão TCP; somente a chamada REST autenticada verifica a resposta da aplicação.
+
+### 5. Executar os clientes e demonstrar a viagem
+
+Clientes com escolha entre as três empresas, em terminais separados:
+
+```powershell
+docker run --rm -it --entrypoint /bin/cliente_motorista vaijunto:local `
+  -vaijunto 192.168.1.10:8080 -minas 192.168.1.11:8080 -sao-paulo 192.168.1.12:8080
+docker run --rm -it --entrypoint /bin/cliente_passageiro vaijunto:local `
+  -vaijunto 192.168.1.10:8080 -minas 192.168.1.11:8080 -sao-paulo 192.168.1.12:8080
+```
+
+Escolha VAIJUNTO, Minas ou São Paulo no menu inicial. Substitua os três IPs pelos endereços reais do laboratório. Para configurar pelas variáveis do PowerShell:
+
+```powershell
+$env:VAIJUNTO_SERVIDOR_VAIJUNTO = '192.168.1.10:8080'
+$env:VAIJUNTO_SERVIDOR_MINAS = '192.168.1.11:8080'
+$env:VAIJUNTO_SERVIDOR_SAO_PAULO = '192.168.1.12:8080'
+go run ./cmd/cliente_passageiro
+```
+
+As variáveis do terminal são usadas pela execução com Go; em `docker run`, use as três opções mostradas ou passe as variáveis com `-e`. O mesmo exemplo Salvador → Feira de Santana → Vitória da Conquista → Montes Claros continua disponível na seção principal.
+
+### 6. Executar a carga e simular indisponibilidade
+
+```powershell
+docker run --rm --entrypoint /bin/carga vaijunto:local `
+  -servidores '192.168.1.10:8080,192.168.1.11:8080,192.168.1.12:8080' `
+  -clientes 100 -vagas 5
+```
+
+No computador da Minas, execute os comandos abaixo em momentos separados: primeiro pause, observe o comportamento nos demais servidores e depois retome.
+
+```powershell
+docker pause minas
+docker unpause minas
+```
+
+A pausa preserva a RAM. Após encerrar o processo, o backup no volume permite recuperar o estado, como no Linux. Consulte a seção de backup para testar `kill` seguido de `start` no Compose.
+
+### 7. Alternativa sem Docker
+
+Com Go 1.27.0 instalado, defina o token e execute apenas a linha do servidor correspondente a cada computador:
+
+```powershell
+$env:VAIJUNTO_TOKEN_CONSORCIO = 'token-demonstracao-consorcio-2026'
+
+# VaiJunto
+go run ./cmd/servidor -empresa vaijunto -endereco :8080 -rest :8081 -pares 'minas=http://192.168.1.11:8081,sao-paulo=http://192.168.1.12:8081'
+
+# Minas
+go run ./cmd/servidor -empresa minas -endereco :8080 -rest :8081 -pares 'vaijunto=http://192.168.1.10:8081,sao-paulo=http://192.168.1.12:8081'
+
+# São Paulo
+go run ./cmd/servidor -empresa sao-paulo -endereco :8080 -rest :8081 -pares 'vaijunto=http://192.168.1.10:8081,minas=http://192.168.1.11:8081'
+```
+
+Em outros terminais, os clientes e a carga também podem ser executados diretamente:
+
+```powershell
+go run ./cmd/cliente_motorista -servidor 192.168.1.10:8080
+go run ./cmd/cliente_passageiro -servidor 192.168.1.10:8080
+go run ./cmd/carga -servidores '192.168.1.10:8080,192.168.1.11:8080,192.168.1.12:8080' -clientes 100 -vagas 5
+```
+
+A opção `-endereco :0` também escolhe uma porta livre no Windows. Use a porta mostrada no terminal ao conectar os clientes. Para REST dinâmico, atualize os pares com o endereço efetivo.
+
+### 8. Testar as três empresas no mesmo computador Windows
+
+Este roteiro executa três servidores isolados no mesmo computador, usando `compose.consorcio.yaml`. Não é necessário instalar Go para os passos com Docker. A apresentação principal continua sendo em computadores diferentes.
+
+| Serviço Docker | Empresa representada | TCP no computador | REST no computador |
+|---|---|---|---|
+| empresa-a | VaiJunto | localhost:7001 | http://localhost:8001 |
+| empresa-b | Minas | localhost:7002 | http://localhost:8002 |
+| empresa-c | São Paulo | localhost:7003 | http://localhost:8003 |
+
+Os nomes internos desse Compose são `empresa-a`, `empresa-b` e `empresa-c`. Os registros e respostas mostrarão essas identidades. O menu dos clientes apresenta VAIJUNTO, Minas e São Paulo e usa os endereços internos já definidos no Compose. Escolha 1, 2 ou 3 conforme a conta que deseja usar. Execute todos os comandos na pasta do projeto; use o mesmo nome de projeto `laboratorio-arthur` em todos eles.
+
+**Passo 1 — Iniciar as três empresas.** Com o Docker em execução:
+
+```powershell
+$env:VAIJUNTO_TOKEN_CONSORCIO = 'token-demonstracao-consorcio-2026'
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml up --build -d
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml ps
+```
+
+Confira se os três serviços estão em execução. Acompanhe os logs quando necessário:
+
+```powershell
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml logs --tail=50
+```
+
+**Passo 2 — Conferir os catálogos e a comunicação.**
+
+```powershell
+$cabecalhos = @{ Authorization = "Bearer $env:VAIJUNTO_TOKEN_CONSORCIO" }
+Invoke-RestMethod 'http://localhost:8001/consorcio/trechos' -Headers $cabecalhos
+```
+
+Antes de publicar ofertas, `trechos` deve estar vazio. `empresas_indisponiveis` deve estar vazio se as outras duas APIs responderem. Se as portas externas foram alteradas, ajuste o endereço da consulta.
+
+**Passo 3 — Abrir os motoristas.** Abra três terminais diferentes e execute uma linha em cada um:
+
+```powershell
+# VaiJunto
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec empresa-a /bin/cliente_motorista
+
+# Minas
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec empresa-b /bin/cliente_motorista
+
+# São Paulo
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec empresa-c /bin/cliente_motorista
+```
+
+Aqui `exec` abre o cliente dentro de um contêiner. O menu usa os nomes internos `empresa-a:8080`, `empresa-b:8080` e `empresa-c:8080`, configurados no Compose, sem depender das portas publicadas no computador.
+
+Crie uma conta de motorista em cada empresa e publique as ofertas do exemplo da seção 7: Salvador → Feira no VaiJunto, Feira → Vitória da Conquista na empresa São Paulo e Vitória da Conquista → Montes Claros na Minas. Use a mesma data futura, horários compatíveis e uma vaga por trecho.
+
+**Passo 4 — Abrir os passageiros.** Para um passageiro do VaiJunto:
+
+```powershell
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec empresa-a /bin/cliente_passageiro
+```
+
+Crie a conta, busque Salvador → Montes Claros na data publicada e confirme o itinerário. Confira a reserva em Minhas reservas e a ocupação nos três motoristas.
+
+Para testar outra origem de requisições, abra outro terminal e conecte um passageiro da Minas:
+
+```powershell
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec empresa-b /bin/cliente_passageiro
+```
+
+Com a única vaga já confirmada, a segunda reserva não deve confirmar os mesmos assentos. Para disputar a vaga simultaneamente, deixe dois passageiros com resultados de busca obtidos antes da confirmação e tente confirmar nos dois terminais. Use o simulador para concorrência automatizada.
+
+Cancele a primeira reserva pelo passageiro e confira a devolução nos três motoristas. Depois faça nova reserva e teste o cancelamento de uma oferta pelo motorista, verificando o cancelamento da viagem inteira e o aviso ao passageiro.
+
+**Passo 5 — Executar a carga nas três empresas.** O simulador cria contas e caronas próprias:
+
+```powershell
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml exec -T empresa-a /bin/carga -servidores empresa-a:8080,empresa-b:8080,empresa-c:8080 -clientes 100 -vagas 5
+```
+
+Os nomes acima são resolvidos na rede interna do Docker. Confira o JSON de métricas, especialmente `integridade`, `pendentes` e `erros_transporte`.
+
+**Passo 6 — Testar a indisponibilidade de uma empresa preservando a RAM.** Pause a Minas:
+
+```powershell
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml pause empresa-b
+```
+
+Faça uma busca no passageiro do VaiJunto e observe a indicação de empresa indisponível. Uma viagem nova que exige a Minas não deve ser confirmada sem ela. Para testar independência, publique e reserve também uma carona inteiramente local no VaiJunto.
+
+Retome o mesmo processo:
+
+```powershell
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml unpause empresa-b
+```
+
+Consulte as reservas e as vagas novamente. Para falhas durante pontos específicos de uma reserva, use os testes automatizados de injeção de falhas; pausar manualmente antes de iniciar uma reserva não reproduz todos esses pontos.
+
+**Passo 7 — Executar os testes automatizados, caso Go esteja instalado no computador.**
+
+```powershell
+go test ./...
+go test ./internal/servidor -run 'TestConsorcio|TestBackup|TestConsulta' -v -count=1 -timeout=120s
+go vet ./...
+```
+
+A construção da imagem também executa os testes. Os testes automatizados usam suas próprias instâncias temporárias e não modificam os dados dos contêineres da demonstração.
+
+**Passo 8 — Encerrar o ambiente.** Saia dos menus e execute:
+
+```powershell
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml down
+```
+
+Esse comando encerra os três servidores e preserva os volumes de backup. Ao executar novamente o passo 1, os dados serão carregados; entre novamente nas contas. Para começar do zero nas três empresas, acrescente `-v` ao comando `down`.
+
+**Portas ocupadas no teste local.** Para pedir portas externas livres, configure antes de iniciar:
+
+```powershell
+$env:VAIJUNTO_TCP_A = $env:VAIJUNTO_TCP_B = $env:VAIJUNTO_TCP_C = "0"
+$env:VAIJUNTO_REST_A = $env:VAIJUNTO_REST_B = $env:VAIJUNTO_REST_C = "0"
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml up --build -d
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml port empresa-a 8080
+docker compose -p laboratorio-arthur -f compose.consorcio.yaml port empresa-a 8081
+```
+
+Os clientes e a carga executados com `exec` continuam usando as mesmas portas internas. Apenas consultas e clientes executados fora dos contêineres precisam das portas publicadas reais. Para voltar aos valores padrão em outro teste, remova essas variáveis do ambiente antes de iniciar. Não recrie os contêineres durante uma demonstração cujos dados deseja preservar.
+
+## Testes automatizados
+
+Os testes são implementados exclusivamente em Go. A pasta `testes` reúne os testes que usam a API pública dos pacotes. Os testes que precisam acessar funções ou estados privados ficam junto ao código em `internal/cliente` e `internal/servidor`, sem tornar esses detalhes públicos apenas para testá-los. Os testes do consórcio iniciam suas próprias instâncias temporárias, sem scripts Bash ou PowerShell. O simulador também é um programa Go em `cmd/carga`.
+
+Na pasta do projeto, com Go instalado:
 
 ```bash
-docker build --no-cache --target testes -t vaijunto:testes .
+go test ./...
+go vet ./...
 ```
 
-### Teste de carga
-
-O teste de carga precisa de um servidor ativo. Ele cria usuários e duas ofertas conectadas para simular a disputa pelas vagas.
-
-Execução local:
+Para os testes do consórcio, incluindo carga TCP e injeção de falhas:
 
 ```bash
-go run ./cmd/carga -servidor 127.0.0.1:8080 -clientes 100 -vagas 5
+go test ./internal/servidor -run 'TestConsorcio|TestBackup|TestConsulta' -v -count=1 -timeout=120s
 ```
 
-Servidor em outro computador:
+Para executar com detector de corridas no Linux, tenha compilador C instalado e suporte CGO:
 
 ```bash
-go run ./cmd/carga -servidor 192.168.1.10:8080 -clientes 100 -vagas 5
+CGO_ENABLED=1 go test -race ./...
 ```
 
-Docker:
+Os testes usam portas locais escolhidas pelo sistema. Não precisam ocupar 8080 ou 8081 e não dependem dos servidores da apresentação em execução. O Dockerfile também executa o detector de corridas na construção da imagem.
 
-```bash
-docker compose run --rm carga
-docker compose run --rm carga -clientes 50 -vagas 3
-```
+A suíte cobre busca entre empresas, disputa pela última vaga a partir de três origens, idempotência, cancelamento global, queda de comunicação, ausência de maioria e recuperação dos backups após recriar os três estados locais. A recuperação é verificada com transação preparada, decisão escolhida e reserva confirmada. Também cobre arquivo danificado e conexão ociosa sem bloquear a fila.
 
-Com 100 clientes e cinco vagas, o resultado esperado é cinco confirmações, 95 recusas, zero erros de transporte e `integridade: true`.
+## Arquitetura e organização do código
 
-## Protocolo de comunicação
+| Local | Responsabilidade |
+|---|---|
+| `cmd/servidor` | Configuração e inicialização TCP/REST |
+| `cmd/cliente_motorista` | Entrada do cliente motorista |
+| `cmd/cliente_passageiro` | Entrada do cliente passageiro |
+| `cmd/carga` | Entrada do simulador local e distribuído |
+| `internal/configuracao/rede.go` | Endereços TCP, identidades e participantes REST |
+| `internal/cliente` | `menu.go`: configuração, acesso e navegação; `motorista.go` e `passageiro.go`: operações; `entrada.go`: formulários; `tcp.go`: transporte |
+| `internal/protocolo` | Tipos das mensagens e validações |
+| `internal/consorcio/rest.go` | Catálogos REST e agrupamento dos trechos por empresa |
+| `internal/servidor/gerenciador.go` | Estado local e travas |
+| `internal/servidor/fila.go` | Filas de leitura e escrita com um trabalhador TCP |
+| `internal/servidor/backup.go` | Gravação e restauração do arquivo privado |
+| `internal/servidor/caronas.go` | Ofertas e exploração dos itinerários |
+| `internal/servidor/transacoes.go` | Preparação, confirmação e aborto locais |
+| `internal/servidor/distribuido.go` | Tipos de coordenação, aplicação e recuperação |
+| `internal/servidor/rest_consorcio.go` | Chamadas REST entre empresas |
+| `internal/servidor/consenso.go` | Promessas, cédulas e decisão por maioria |
+| `internal/servidor/itinerario_distribuido.go` | Integração da busca, reservas e cancelamentos entre empresas |
+| `internal/carga/carga.go` | Cenários de carga local e distribuída, métricas e verificação de integridade |
+| `testes` | Testes pela API pública: integração, menus, comunicação REST, configuração e validação |
 
-A documentação detalhada está em [internal/protocolo/PROTOCOLO.md](internal/protocolo/PROTOCOLO.md).
+O TCP possui duas filas, com até 128 mensagens de leitura e 128 de escrita, e um trabalhador que alterna a preferência entre elas. Leitores de rede aguardam os sockets sem ocupar esse trabalhador. O limite de transporte é de 256 conexões simultâneas; fila cheia recebe resposta de erro. Há outras goroutines para rede, REST e recuperação: o programa não executa inteiro em uma única goroutine. O buffer TCP inicial é de 4 KiB, com limite de mensagem de 1 MiB.
 
-Cada requisição é um objeto JSON em uma linha, terminado por `\n`, com `acao`, `sessao` quando necessário e `dados`:
+Os trechos têm travas próprias, adquiridas em ordem de ID. A confirmação local verifica os trechos antes de registrar a reserva. A preparação distribuída distingue assentos preparados de confirmados; confirmar não desconta a mesma vaga novamente.
 
-```json
-{"acao":"CONSULTAR_RESERVAS","sessao":"ID_DA_SESSAO","dados":{}}
-```
+As empresas são preparadas em ordem consistente e conflitos remotos são recusados sem espera por outros assentos. A precedência sobre uma vaga é a ordem de admissão no servidor dono, registrada por contador local; não é uma promessa de ordem global de envio das mensagens.
 
-O identificador da sessão é administrado internamente pelo cliente e não precisa ser copiado ou informado pelo usuário. Publicações e confirmações usam uma chave para permitir a repetição segura da mesma operação.
+A decisão conjunta usa consenso de valor único por transação, implementado no código: cédulas com contador lógico e identificador da empresa, promessas, aceitação por maioria e certificados. O proponente é escolhido por operação, sem servidor central fixo.
+
+A especificação das requisições, respostas, códigos HTTP e sequência das mensagens está em [internal/consorcio/API.md](internal/consorcio/API.md). O contrato TCP está em [internal/protocolo/PROTOCOLO.md](internal/protocolo/PROTOCOLO.md).
+
+## Garantias e limites
+
+- Cada empresa é responsável por alterar suas próprias vagas.
+- As referências de trechos incluem a empresa, evitando confundir IDs locais iguais.
+- Pedidos repetidos não duplicam reservas nem devolvem vagas mais de uma vez.
+- Timeout indica resultado desconhecido; ele não autoriza liberar uma preparação sozinho.
+- Uma decisão distribuída exige uma maioria de duas das três testemunhas.
+- A confirmação ao passageiro depende da aplicação em todos os donos dos trechos.
+- Reservas inteiramente locais continuam independentes das outras empresas.
+- Sem maioria, operações distribuídas podem permanecer pendentes para preservar consistência.
+- Um processo reiniciado com backup íntegro recupera seus dados, sua geração e as promessas de voto.
+- Sem backup, uma geração nova não volta a votar em transações da geração perdida.
+- Os backups são locais e não replicam as bases das empresas. Perder o arquivo ou o disco da empresa impede essa recuperação.
+
+Salvar uma fotografia completa a cada escrita simplifica a recuperação e acrescenta custo de disco. Um trabalhador TCP também serializa as operações; isso controla a concorrência, mas não garante maior vazão. O roteiro de apresentação explica as decisões e os limites em [docs/APRESENTACAO.md](docs/APRESENTACAO.md).
 
 ## Problemas comuns
 
-| Problema | O que verificar |
-| :--- | :--- |
-| `go` não reconhecido ou versão incompatível | Instalação do Go e versão exigida pelo `go.mod` |
-| Docker não conecta ao daemon | Docker Desktop ou serviço Docker em execução |
-| Porta 8080 em uso | Outro servidor ou processo ativo; encerre-o ou configure outra porta |
-| Conexão recusada | Servidor iniciado, endereço correto e porta publicada |
-| `lookup servidor: no such host` | Para servidor remoto, configure `VAIJUNTO_SERVIDOR` com o IP real |
-| Timeout em outro computador | IP, firewall e isolamento entre dispositivos da rede |
-| Menu volta após o login | Cliente e servidor podem estar em versões diferentes; reconstrua ambos |
-| Nenhum itinerário encontrado | Data, partida futura, vagas e compatibilidade dos horários |
-| E-mail já cadastrado | Entre na conta existente ou use outro e-mail |
-| Sessão inválida ou expirada | Entre novamente; reiniciar o servidor invalida as sessões |
-| Dados desapareceram | O servidor foi encerrado ou reiniciado; o estado fica somente em RAM |
-| Chave repetida com dados diferentes | Use uma nova chave para uma nova operação |
+| Problema | O que conferir |
+|---|---|
+| Docker não responde | Serviço Docker ativo e permissão do usuário |
+| Porta já ocupada | `ss -ltn`, outra publicação de porta ou seleção automática |
+| Nome do contêiner já existe | `docker ps -a`; confira se já existe um servidor daquela empresa em execução |
+| HTTP 401 | Mesmo token nas empresas e cabeçalho `Authorization` correto no curl |
+| Outra empresa não responde | IP real, porta REST publicada, firewall e conectividade entre computadores |
+| Empresa aparece indisponível | Identificador em `-pares`, token e API REST da empresa |
+| Cliente não conecta | Use a porta TCP; em contêiner de cliente, informe o IP do computador servidor |
+| Itinerário não aparece | Cidades, data, conexões de horário, vagas e disponibilidade das empresas |
+| Reserva aparece pendente | Consulte novamente; confira se há maioria e se os donos dos trechos estão respondendo |
+| Senha recusada | De 8 a 128 caracteres e cadastro na empresa correta |
+| Estado sumiu após reiniciar | Mesmo volume ou caminho do backup, identidade e token; sem o arquivo não há restauração |
 
-Mantenha somente um servidor ativo e use a mesma versão do projeto em todos os computadores.
+Para encerrar a demonstração, use Ctrl+C ou `docker stop NOME`. Contêineres com `--rm` são removidos, mas os volumes nomeados de cada empresa permanecem para a próxima execução.
+
+
+### Erro no laboratorio: `too many colons in address`
+
+Nos clientes, informe somente `IP:porta TCP publicada`. Nao use
+`172.16.103.7:8081:8080`: isso mistura duas portas no mesmo endereco.
+Com os servidores publicados com `-p 8080:8080 -p 8081:8081`, use:
+
+```bash
+docker run --rm -it --entrypoint /bin/cliente_motorista vaijunto:local \
+  -vaijunto 172.16.103.9:8080 \
+  -minas 172.16.103.8:8080 \
+  -sao-paulo 172.16.103.7:8080
+```
+
+Para passageiro, troque o entrypoint por `/bin/cliente_passageiro`.
+A porta 8081 e da API REST entre empresas; nao e usada pelo cliente TCP.
+Se publicou TCP com `-p 9000:8080`, o cliente deve usar `IP:9000`.
+Confira no computador de cada empresa com `docker port NOME_DO_CONTAINER 8080/tcp`.
+O mapeamento `-p PORTA_EXTERNA:PORTA_INTERNA` pertence ao comando do
+servidor Docker; ele nao faz parte do endereco passado ao cliente.
+Depois de atualizar o codigo, reconstrua a imagem com
+`docker build --target runtime -t vaijunto:local .` em cada computador.

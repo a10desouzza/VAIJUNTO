@@ -1,7 +1,14 @@
-// internal/servidor/tcp.go - VaiJunto: sistema de caronas compartilhadas
-// Autor: Arthur Souza
-// Atendimento TCP por goroutine, com limite de conexoes e prazos de leitura e escrita.
-// A quebra de linha delimita a mensagem; uma leitura TCP pode conter apenas parte dela.
+// Arquivo: internal/servidor/tcp.go
+// Projeto: Consórcios - Problema 2
+// Autor: Arthur de Andrade Souza
+// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
+// Professor: Antonio A T R Coutinho
+// Declaração de não plágio: declaro que não apresento trabalho de terceiros
+// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
+//
+// Aceita conexões TCP e delimita as mensagens JSON pela quebra de linha.
+// Controla prazos, tamanho das mensagens e envio completo das respostas.
+// Leitores de rede encaminham pedidos ao executor para que conexões ociosas não o bloqueiem.
 
 package servidor
 
@@ -14,24 +21,38 @@ import (
 	"net"
 	"sync"
 	"time"
+
 	"vaijunto/internal/protocolo"
 )
 
-// AtenderConexao: Le ate a quebra de linha e processa somente mensagens completas. Renova os
+// AtenderConexao Le ate a quebra de linha e processa somente mensagens completas. Renova os
 // prazos de rede, envia cada resposta e aceita a proxima linha. Uma linha incompleta nao executa a
 // operacao; falhar ao enviar a resposta nao desfaz uma operacao que ja foi concluida.
+// Recebe: conn net.Conn, g *GrafoItinerarios, timeout time.Duration.
+// Retorna: nenhum valor; executa os efeitos descritos acima.
 func AtenderConexao(conn net.Conn, g *GrafoItinerarios, timeout time.Duration) {
+	atenderConexao(conn, timeout, func(mensagem []byte) []byte {
+		g.limparSessoesExpiradas()
+		return ProcessarMensagem(mensagem, g)
+	})
+}
+
+// atenderConexao le mensagens NDJSON completas, chama o processador e envia respostas ate ocorrer falha ou encerramento; fecha a conexao ao sair.
+// Recebe: conn net.Conn, timeout time.Duration, processar func([]byte) []byte.
+// Retorna: nenhum valor; executa os efeitos descritos acima.
+func atenderConexao(conn net.Conn, timeout time.Duration, processar func([]byte) []byte) {
 	defer conn.Close()
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	leitor := bufio.NewReaderSize(conn, protocolo.LimiteMensagem)
+	// Requisicoes pequenas nao precisam reservar 1 MiB por conexao.
+	leitor := bufio.NewReaderSize(conn, 4096)
 	for {
 		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 			return
 		}
 		/* Espera o delimitador. EOF no meio da linha nao executa uma requisicao incompleta. */
-		linha, err := leitor.ReadSlice('\n')
+		linha, err := lerMensagem(leitor)
 		if err != nil {
 			if errors.Is(err, bufio.ErrBufferFull) {
 				conn.SetWriteDeadline(time.Now().Add(timeout))
@@ -39,8 +60,7 @@ func AtenderConexao(conn net.Conn, g *GrafoItinerarios, timeout time.Duration) {
 			}
 			return
 		}
-		g.limparSessoesExpiradas()
-		resposta := ProcessarMensagem(bytes.TrimSuffix(linha, []byte{'\n'}), g)
+		resposta := processar(bytes.TrimSuffix(linha, []byte{'\n'}))
 		if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
 			return
 		}
@@ -50,9 +70,32 @@ func AtenderConexao(conn net.Conn, g *GrafoItinerarios, timeout time.Duration) {
 	}
 }
 
-// escrever: repete Write quando apenas parte do buffer foi enviada, ate transmitir todos os bytes
-// ou falhar. Retorna: nil depois de enviar todos os bytes; error de escrita ou io.ErrShortWrite se
-// nao houver progresso.
+// lerMensagem acumula somente quando a linha ultrapassa o buffer inicial.
+// Mantem o limite de 1 MiB e nunca executa uma linha incompleta.
+// Recebe: leitor *bufio.Reader.
+// Retorna: a linha recebida e eventual erro de leitura/limite; o chamador nao deve processar linha incompleta.
+func lerMensagem(leitor *bufio.Reader) ([]byte, error) {
+	var linha []byte
+	for {
+		parte, err := leitor.ReadSlice('\n')
+		tamanho := len(linha) + len(parte)
+		if tamanho > protocolo.LimiteMensagem || tamanho == protocolo.LimiteMensagem && err == bufio.ErrBufferFull {
+			return nil, bufio.ErrBufferFull
+		}
+		if len(linha) == 0 && err == nil {
+			return parte, nil
+		}
+		linha = append(linha, parte...)
+		if err != bufio.ErrBufferFull {
+			return linha, err
+		}
+	}
+}
+
+// escrever repete Write quando apenas parte do buffer foi enviada, ate transmitir todos os bytes
+// ou falhar.
+// Recebe: w io.Writer, b []byte.
+// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func escrever(w io.Writer, b []byte) error {
 	for len(b) > 0 {
 		n, err := w.Write(b)
@@ -67,47 +110,55 @@ func escrever(w io.Writer, b []byte) error {
 	return nil
 }
 
-// Servir: Aceita sockets e limita a 256 atendimentos ativos por um canal usado como semaforo. Cada
-// conexao roda em uma goroutine. No encerramento fecha o listener e os sockets registrados, depois
-// espera o WaitGroup para que os atendimentos terminem. Retorna: nil ao encerrar pelo contexto;
-// error se a aceitacao falhar sem cancelamento.
+// Servir separa o transporte da execucao: leitores aguardam os sockets e um
+// trabalhador processa as mensagens. Uma conexao ociosa nao ocupa esse trabalhador.
+// Recebe: ctx context.Context, listener net.Listener, g *GrafoItinerarios, timeout time.Duration.
+// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func Servir(ctx context.Context, listener net.Listener, g *GrafoItinerarios, timeout time.Duration) error {
-	var wg sync.WaitGroup
-	/* Esta trava cuida apenas da lista de sockets. O grafo possui seu proprio RWMutex. */
-	var mu sync.Mutex
-	conexoes := make(map[net.Conn]struct{})
-	encerrar := make(chan struct{})
-	defer close(encerrar)
+	ctx, cancelar := context.WithCancel(ctx)
+	defer cancelar()
+	fila := novaFila()
+	fimTrabalhador := make(chan struct {
+	})
 	go func() {
+		defer close(fimTrabalhador)
+		fila.atender(ctx, g)
+	}()
+
+	var conexoesMu sync.Mutex
+	conexoes := make(map[net.Conn]struct{})
+	var atendimentos sync.WaitGroup
+	vagas := make(chan struct{}, 256)
+	fimManutencao := make(chan struct{})
+	go func() {
+		defer close(fimManutencao)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				g.limparSessoesExpiradas()
-			case <-encerrar:
+			case <-ctx.Done():
 				return
 			}
 		}
 	}()
 	go func() {
-		select {
-		case <-ctx.Done():
-			listener.Close()
-		case <-encerrar:
-		}
+		<-ctx.Done()
+		_ = listener.Close()
 	}()
 	defer func() {
-		listener.Close()
-		mu.Lock()
+		cancelar()
+		_ = listener.Close()
+		conexoesMu.Lock()
 		for conn := range conexoes {
-			conn.Close()
+			_ = conn.Close()
 		}
-		mu.Unlock()
-		wg.Wait()
+		conexoesMu.Unlock()
+		atendimentos.Wait()
+		<-fimTrabalhador
+		<-fimManutencao
 	}()
-	/* Canal como semaforo: limita atendimentos ativos e devolve a vaga quando a goroutine sai. */
-	vagas := make(chan struct{}, 256)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -119,17 +170,24 @@ func Servir(ctx context.Context, listener net.Listener, g *GrafoItinerarios, tim
 		select {
 		case vagas <- struct{}{}:
 		default:
-			conn.Close()
+			_ = conn.Close()
 			continue
 		}
-		mu.Lock()
+		conexoesMu.Lock()
 		conexoes[conn] = struct{}{}
-		mu.Unlock()
-		wg.Add(1)
+		conexoesMu.Unlock()
+		atendimentos.Add(1)
 		go func() {
-			defer wg.Done()
-			defer func() { <-vagas; mu.Lock(); delete(conexoes, conn); mu.Unlock() }()
-			AtenderConexao(conn, g, timeout)
+			defer atendimentos.Done()
+			defer func() {
+				<-vagas
+				conexoesMu.Lock()
+				delete(conexoes, conn)
+				conexoesMu.Unlock()
+			}()
+			atenderConexao(conn, timeout, func(mensagem []byte) []byte {
+				return fila.executar(ctx, mensagem)
+			})
 		}()
 	}
 }

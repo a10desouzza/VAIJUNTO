@@ -1,0 +1,43 @@
+name: vaijunto-consorcio
+x-clientes: &clientes
+  VAIJUNTO_SERVIDOR_VAIJUNTO: empresa-a:8080
+  VAIJUNTO_SERVIDOR_MINAS: empresa-b:8080
+  VAIJUNTO_SERVIDOR_SAO_PAULO: empresa-c:8080
+x-empresa: &empresa
+  image: vaijunto:local
+  build:
+    context: .
+    target: runtime
+  command: ["-endereco", ":8080", "-rest", ":8081"]
+services:
+  empresa-a:
+    <<: *empresa
+    volumes: ["dados-a:/dados"]
+    ports: ["${VAIJUNTO_TCP_A:-7001}:8080", "${VAIJUNTO_REST_A:-8001}:8081"]
+    environment:
+      <<: *clientes
+      VAIJUNTO_EMPRESA: empresa-a
+      VAIJUNTO_PARES: empresa-b=http://empresa-b:8081,empresa-c=http://empresa-c:8081
+      VAIJUNTO_TOKEN_CONSORCIO: ${VAIJUNTO_TOKEN_CONSORCIO:?Defina um token de pelo menos 16 caracteres}
+  empresa-b:
+    <<: *empresa
+    volumes: ["dados-b:/dados"]
+    ports: ["${VAIJUNTO_TCP_B:-7002}:8080", "${VAIJUNTO_REST_B:-8002}:8081"]
+    environment:
+      <<: *clientes
+      VAIJUNTO_EMPRESA: empresa-b
+      VAIJUNTO_PARES: empresa-a=http://empresa-a:8081,empresa-c=http://empresa-c:8081
+      VAIJUNTO_TOKEN_CONSORCIO: ${VAIJUNTO_TOKEN_CONSORCIO:?Defina um token de pelo menos 16 caracteres}
+  empresa-c:
+    <<: *empresa
+    volumes: ["dados-c:/dados"]
+    ports: ["${VAIJUNTO_TCP_C:-7003}:8080", "${VAIJUNTO_REST_C:-8003}:8081"]
+    environment:
+      <<: *clientes
+      VAIJUNTO_EMPRESA: empresa-c
+      VAIJUNTO_PARES: empresa-a=http://empresa-a:8081,empresa-b=http://empresa-b:8081
+      VAIJUNTO_TOKEN_CONSORCIO: ${VAIJUNTO_TOKEN_CONSORCIO:?Defina um token de pelo menos 16 caracteres}
+volumes:
+  dados-a:
+  dados-b:
+  dados-c:

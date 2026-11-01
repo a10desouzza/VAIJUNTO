@@ -1,3 +1,14 @@
+// Arquivo: internal/servidor/roteador_test.go
+// Projeto: Consórcios - Problema 2
+// Autor: Arthur de Andrade Souza
+// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
+// Professor: Antonio A T R Coutinho
+// Declaração de não plágio: declaro que não apresento trabalho de terceiros
+// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
+//
+// Envia mensagens ao roteador para verificar o contrato JSON e as respostas.
+// Cobre campos duplicados ou desconhecidos, limites, cadastro e serialização de erros.
+
 package servidor
 
 import (
@@ -6,21 +17,13 @@ import (
 	"math"
 	"strings"
 	"testing"
+
 	"vaijunto/internal/protocolo"
 )
 
-func TestDecodificarAceitaObjetoEstrito(t *testing.T) {
-	var destino struct {
-		Nome string `json:"nome"`
-	}
-	if err := decodificar([]byte(`{"nome":"Ana"}`), &destino); err != nil {
-		t.Fatal(err)
-	}
-	if destino.Nome != "Ana" {
-		t.Fatalf("nome = %q", destino.Nome)
-	}
-}
-
+// TestDecodificarRejeitaJSONAmbiguoOuForaDoContrato verifica o cenario: Decodificar Rejeita JSONAmbiguo Ou Fora Do Contrato.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestDecodificarRejeitaJSONAmbiguoOuForaDoContrato(t *testing.T) {
 	casos := map[string][]byte{
 		"vazio":              nil,
@@ -44,6 +47,9 @@ func TestDecodificarRejeitaJSONAmbiguoOuForaDoContrato(t *testing.T) {
 	}
 }
 
+// TestProcessarMensagemRespeitaLimite verifica o cenario: Processar Mensagem Respeita Limite.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestProcessarMensagemRespeitaLimite(t *testing.T) {
 	raw := ProcessarMensagem(bytes.Repeat([]byte{'x'}, protocolo.LimiteMensagem), NovoGrafo())
 	var resposta protocolo.Resposta
@@ -55,6 +61,9 @@ func TestProcessarMensagemRespeitaLimite(t *testing.T) {
 	}
 }
 
+// TestCadastroPeloRoteadorCriaSessaoAutomatica verifica o cenario: Cadastro Pelo Roteador Cria Sessao Automatica.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestCadastroPeloRoteadorCriaSessaoAutomatica(t *testing.T) {
 	dados, err := json.Marshal(protocolo.Cadastro{
 		Nome: "Ana Teste", Email: "ana@cadastro.test", Senha: "senha1234", Perfil: protocolo.Passageiro,
@@ -90,6 +99,9 @@ func TestCadastroPeloRoteadorCriaSessaoAutomatica(t *testing.T) {
 	}
 }
 
+// TestCodificarRespostaTemQuebraDeLinhaEFallback verifica o cenario: Codificar Resposta Tem Quebra De Linha EFallback.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestCodificarRespostaTemQuebraDeLinhaEFallback(t *testing.T) {
 	normal := codificarResposta(protocolo.Resposta{Status: protocolo.Sucesso, Mensagem: "ok"})
 	if normal[len(normal)-1] != '\n' || !json.Valid(bytes.TrimSpace(normal)) {

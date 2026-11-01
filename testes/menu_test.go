@@ -1,23 +1,35 @@
-// internal/cliente/menu_test.go - VaiJunto: sistema de caronas compartilhadas
-// Autor: Arthur Souza
-// Testes dos menus com entrada simulada e servidor TCP local.
+// Arquivo: testes/menu_test.go
+// Projeto: Consórcios - Problema 2
+// Autor: Arthur de Andrade Souza
+// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
+// Professor: Antonio A T R Coutinho
+// Declaração de não plágio: declaro que não apresento trabalho de terceiros
+// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
+//
+// Executa os menus com entrada simulada e comunicação TCP com servidores de teste.
+// Confere fluxos de uso, entradas inválidas e encaminhamento para a empresa escolhida.
 
-package cliente_test
+package testes
 
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
 	"time"
+
 	"vaijunto/internal/cliente"
+	"vaijunto/internal/configuracao"
 	"vaijunto/internal/protocolo"
 	"vaijunto/internal/servidor"
 )
 
 // TestMenusFluxoCompletoTCP: Simula entradas dos dois perfis em um servidor TCP local e confere
 // cadastro, publicacao, reserva, cancelamento e avisos.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestMenusFluxoCompletoTCP(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -26,7 +38,9 @@ func TestMenusFluxoCompletoTCP(t *testing.T) {
 	ctx, cancelar := context.WithCancel(context.Background())
 	fim := make(chan error, 1) // cria um canal para receber o resultado do servidor
 	// inicia o servidor em uma goroutine separada
-	go func() { fim <- servidor.Servir(ctx, listener, servidor.NovoGrafo(), time.Second) }()
+	go func() {
+		fim <- servidor.Servir(ctx, listener, servidor.NovoGrafo(), time.Second)
+	}()
 	// garante que o servidor seja encerrado e que o resultado seja verificado
 	defer func() {
 		cancelar()
@@ -61,6 +75,8 @@ func TestMenusFluxoCompletoTCP(t *testing.T) {
 
 // TestMenuEntradaInvalidaEEncerramento: Simula EOF e opcoes invalidas e verifica o encerramento do
 // menu sem falha.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestMenuEntradaInvalidaEEncerramento(t *testing.T) {
 	// testa entradas inválidas e EOF para ambos os perfis
 	for _, entrada := range []string{"", "abc\n9\n0\n", "2\nNome\n"} {
@@ -71,5 +87,52 @@ func TestMenuEntradaInvalidaEEncerramento(t *testing.T) {
 		if !strings.Contains(saida.String(), "Cliente encerrado") {
 			t.Fatal(saida.String())
 		}
+	}
+}
+
+// A selecao e o cadastro compartilham a entrada: cada empresa deve receber sua
+// propria conta, inclusive quando todas as linhas ja estao no buffer.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
+func TestEscolhaDaEmpresaAntesDoCadastro(t *testing.T) {
+	nomes := []string{"VAIJUNTO", "Minas", "São Paulo"}
+	for escolhida, nome := range nomes {
+		t.Run(nome, func(t *testing.T) {
+			g := servidor.NovoGrafo()
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancelar := context.WithCancel(context.Background())
+			fim := make(chan error, 1)
+			go func() {
+				fim <- servidor.Servir(ctx, listener, g, time.Second)
+			}()
+			defer func() {
+				cancelar()
+				if err := <-fim; err != nil {
+					t.Error(err)
+				}
+			}()
+			empresas := make([]configuracao.ServidorCliente, len(nomes))
+			for i, nome := range nomes {
+				empresas[i] = configuracao.ServidorCliente{Nome: nome, Endereco: "127.0.0.1:1"}
+			}
+			empresas[escolhida].Endereco = listener.Addr().String()
+			for _, perfil := range []string{protocolo.Motorista, protocolo.Passageiro} {
+				email := fmt.Sprintf("%s@selecao.test", perfil)
+				entrada := fmt.Sprintf("%d\n2\nPessoa Teste\n%s\nsenha1234\nsenha1234\n0\n", escolhida+1, email)
+				var saida bytes.Buffer
+				if err := cliente.ExecutarComSelecao(empresas, perfil, strings.NewReader(entrada), &saida); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(saida.String(), "Empresa: "+nome) || !strings.Contains(saida.String(), "Conta criada") {
+					t.Fatal("escolha nao chegou ao cadastro", saida.String())
+				}
+				if _, err := g.Autenticar(protocolo.Credenciais{Email: email, Senha: "senha1234"}); err != nil {
+					t.Fatal("conta foi enviada ao servidor errado", err)
+				}
+			}
+		})
 	}
 }

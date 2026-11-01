@@ -1,6 +1,13 @@
-// internal/servidor/itinerarios_test.go - VaiJunto: sistema de caronas compartilhadas
-// Autor: Arthur Souza
-// Testes de publicacao, precos, conexoes e horarios dos itinerarios.
+// Arquivo: internal/servidor/itinerarios_test.go
+// Projeto: Consórcios - Problema 2
+// Autor: Arthur de Andrade Souza
+// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
+// Professor: Antonio A T R Coutinho
+// Declaração de não plágio: declaro que não apresento trabalho de terceiros
+// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
+//
+// Verifica a composição de caronas em trechos e a busca de conexões válidas.
+// Testa horários de viagem e parada, preços e ordenação dos resultados.
 
 package servidor
 
@@ -8,11 +15,14 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
 	"vaijunto/internal/protocolo"
 )
 
 // TestPublicacaoSemParadaNoDestinoFinal: Recebe o teste e publica rotas de varios tamanhos.
 // Confere horarios, parada final zero e repeticao sem alterar a entrada. Sem retorno.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestPublicacaoSemParadaNoDestinoFinal(t *testing.T) {
 	c := criarCenario(t)
 	for _, n := range []int{2, 3, 8, 21} {
@@ -55,6 +65,8 @@ func TestPublicacaoSemParadaNoDestinoFinal(t *testing.T) {
 
 // TestConexaoNaChegadaAoDestinoFinal: Recebe o teste e cria uma conexao no instante da chegada.
 // Confere busca e reserva sem espera no destino final. Sem retorno.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestConexaoNaChegadaAoDestinoFinal(t *testing.T) {
 	c := criarCenario(t)
 	// A-B chega às 08:40: a parada de 5 enviada pelo cliente antigo é ignorada.
@@ -77,6 +89,8 @@ func TestConexaoNaChegadaAoDestinoFinal(t *testing.T) {
 
 // TestPrecoPorTrechoEMesmaRota: Confere o preco escolhido, IDs diferentes para ofertas distintas e
 // repeticao sem duplicar a publicacao.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestPrecoPorTrechoEMesmaRota(t *testing.T) {
 	c := criarCenario(t)
 	p := protocolo.PublicacaoCarona{Chave: "nova", Rota: []string{"A", "B"}, DataHora: c.ab.DataHora, Assentos: 2, Trechos: []protocolo.OfertaTrecho{{Preco: 12.81, DistanciaKM: 10.25, TempoViagem: 10}}}
@@ -107,6 +121,8 @@ func TestPrecoPorTrechoEMesmaRota(t *testing.T) {
 
 // TestReservaSerrinhaFeiraSalvadorDuranteViagemEParada: Recebe o teste e avanca o relogio por viagem e parada.
 // Confere a reserva do trecho futuro e sua recusa a partir da partida. Sem retorno.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestReservaSerrinhaFeiraSalvadorDuranteViagemEParada(t *testing.T) {
 	for _, caso := range []struct {
 		nome      string
@@ -145,7 +161,7 @@ func TestReservaSerrinhaFeiraSalvadorDuranteViagemEParada(t *testing.T) {
 			if _, err := c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "iniciado", TrechosIDs: []string{primeiro, segundo}}); err == nil {
 				t.Fatal("reservou trecho iniciado")
 			}
-			if c.g.trechos[segundo].Assentos != 1 {
+			if c.g.trechos[segundo].trecho.Assentos != 1 {
 				t.Fatal("falha parcial consumiu vaga futura")
 			}
 			r, err := c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "futuro", TrechosIDs: []string{segundo}})
@@ -166,6 +182,8 @@ func TestReservaSerrinhaFeiraSalvadorDuranteViagemEParada(t *testing.T) {
 
 // TestBuscaOrdenaPorPartidaMesmoComPrecoEDuracaoMaiores: Recebe o teste e publica horarios com fusos diferentes.
 // Confere a ordem por partida, mesmo com precos e duracoes maiores. Sem retorno.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestBuscaOrdenaPorPartidaMesmoComPrecoEDuracaoMaiores(t *testing.T) {
 	c := criarCenario(t)
 	for i, p := range []struct {

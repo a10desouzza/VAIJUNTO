@@ -1,7 +1,14 @@
-// internal/protocolo/validacao.go - VaiJunto: sistema de caronas compartilhadas
-// Autor: Arthur Souza
-// Validacoes compartilhadas pela interface e pelo servidor.
-// Validar no cliente ajuda na digitacao, mas nao substitui a validacao no servidor.
+// Arquivo: internal/protocolo/validacao.go
+// Projeto: Consórcios - Problema 2
+// Autor: Arthur de Andrade Souza
+// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
+// Professor: Antonio A T R Coutinho
+// Declaração de não plágio: declaro que não apresento trabalho de terceiros
+// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
+//
+// Concentra as regras de validação de nome, e-mail, senha e cidade.
+// Verifica conteúdo, tamanho e representação de texto antes de aceitar os dados.
+// Cliente e servidor reutilizam essas funções para manter as mesmas regras de entrada.
 
 package protocolo
 
@@ -13,9 +20,9 @@ import (
 	"unicode/utf8"
 )
 
-// ValidarEmail: confere o formato e o dominio. Nao verifica se a caixa de e-mail realmente existe.
-// Retorna: nil se o formato for aceito; error com a regra violada. Nao confirma a existencia da
-// caixa de e-mail.
+// ValidarEmail confere o formato e o dominio. Nao verifica se a caixa de e-mail realmente existe.
+// Recebe: email string.
+// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func ValidarEmail(email string) error {
 	if len(email) > 254 || !utf8.ValidString(email) {
 		return fmt.Errorf("e-mail deve ter até 254 bytes")
@@ -45,8 +52,9 @@ func ValidarEmail(email string) error {
 	return nil
 }
 
-// ValidarNome: confere tamanho, letras e separadores aceitos no nome. Retorna: nil para nome
-// aceito; error se tamanho, caracteres ou quantidade de letras forem invalidos.
+// ValidarNome confere tamanho, letras e separadores aceitos no nome.
+// Recebe: nome string.
+// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func ValidarNome(nome string) error {
 	if !utf8.ValidString(nome) || len(nome) > 100 || utf8.RuneCountInString(nome) < 2 {
 		return fmt.Errorf("nome deve ter ao menos 2 caracteres e até 100 bytes")
@@ -67,8 +75,9 @@ func ValidarNome(nome string) error {
 	return nil
 }
 
-// ValidarSenha: confere tamanho e caracteres de controle. Retorna nil quando o formato e aceito.
-// Retorna: nil se atender ao tamanho e caracteres permitidos; error caso contrario.
+// ValidarSenha confere tamanho e caracteres de controle. Retorna nil quando o formato e aceito.
+// Recebe: senha string.
+// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func ValidarSenha(senha string) error {
 	if !utf8.ValidString(senha) || utf8.RuneCountInString(senha) < 8 || len(senha) > 128 || strings.TrimSpace(senha) == "" {
 		return fmt.Errorf("senha deve ter ao menos 8 caracteres e até 128 bytes")
@@ -81,8 +90,9 @@ func ValidarSenha(senha string) error {
 	return nil
 }
 
-// ValidarCidade: aceita acentos e numeros, mas exige ao menos uma letra e limita o tamanho.
-// Retorna: nil quando preenchida e com caracteres aceitos; error se violar as regras.
+// ValidarCidade aceita acentos e numeros, mas exige ao menos uma letra e limita o tamanho.
+// Recebe: cidade string.
+// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func ValidarCidade(cidade string) error {
 	if !utf8.ValidString(cidade) || len(cidade) > 100 || strings.TrimSpace(cidade) == "" {
 		return fmt.Errorf("cidade deve ser preenchida e ter até 100 bytes")

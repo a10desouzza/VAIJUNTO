@@ -4,7 +4,7 @@ Contrato implementado em `modelos.go` e `internal/servidor/roteador.go`. Não ut
 
 ## Mensagens e sessão
 
-Uma requisição é um objeto JSON UTF-8, sem BOM, delimitado por LF (`\n`). CRLF também é aceito. O objeto deve ter menos de 1048576 bytes. Mensagens sem delimitador não são executadas. O servidor encerra conexões ociosas após 30 segundos, configurável por `-timeout`, e limita a 256 conexões simultâneas. Cada conexão processa as mensagens em ordem; conexões diferentes são concorrentes. O cliente espera até 5 segundos para conectar e 30 segundos por operação, e aceita respostas de até 16 MiB.
+Uma requisição é um objeto JSON UTF-8, sem BOM, delimitado por LF (`\n`). CRLF também é aceito. O objeto deve ter menos de 1048576 bytes. Mensagens sem delimitador não são executadas. O servidor encerra conexões ociosas após 30 segundos, configurável por `-timeout`, e limita a 256 conexões simultâneas. Cada conexão preserva a ordem das suas mensagens. Leituras e escritas entram em duas filas limitadas, atendidas por um trabalhador. A leitura dos sockets é concorrente para uma conexão ociosa não bloquear a execução. O cliente espera até 5 segundos para conectar e 30 segundos por operação, e aceita respostas de até 16 MiB.
 
 ```json
 {"acao":"CONSULTAR_RESERVAS","sessao":"ID_DA_SESSAO","dados":{}}
@@ -18,7 +18,7 @@ Uma requisição é um objeto JSON UTF-8, sem BOM, delimitado por LF (`\n`). CRL
 {"status":"ERRO","mensagem":"sessão inválida ou expirada; autentique-se"}
 ```
 
-`CADASTRAR` cria a conta e já inicia o acesso. `AUTENTICAR` continua disponível para contas existentes. As duas operações devolvem `id`, `expira_em` e `usuario`. O identificador vale 15 minutos a partir do login, sem renovação por atividade, é administrado internamente pelo cliente e é revogado por `DESCONECTAR`. Fechar um socket não encerra a sessão. Senhas são armazenadas em RAM como derivação PBKDF2-SHA256 com salt aleatório; o transporte é TCP sem criptografia. Use credenciais de demonstração. Reiniciar o servidor apaga todo o estado.
+`CADASTRAR` cria a conta e já inicia o acesso. `AUTENTICAR` continua disponível para contas existentes. As duas operações devolvem `id`, `expira_em` e `usuario`. O identificador vale 15 minutos a partir do login, sem renovação por atividade, é administrado internamente pelo cliente e é revogado por `DESCONECTAR`. Fechar um socket não encerra a sessão. Senhas são armazenadas em texto puro no estado local e no arquivo de backup; o transporte é TCP sem criptografia. Use credenciais de demonstração. Após reiniciar com o mesmo backup, contas e reservas são recuperadas e o usuário precisa autenticar novamente.
 
 ## Operações
 
@@ -48,7 +48,7 @@ Busca: caminhos sem repetir cidades e com vagas em todos os trechos. A próxima 
 
 `chave`: identificador de 1 a 100 bytes escolhido pelo cliente para uma publicação ou confirmação. Repetir uma operação bem-sucedida com a mesma chave e conteúdo devolve o recurso existente sem duplicá-lo, inclusive se ele já tiver sido cancelado. Reutilizar a chave com dados diferentes é erro. Chaves são separadas por usuário e operação. Falhas não consomem a chave. Cancelamentos repetidos não devolvem assentos duas vezes.
 
-Confirmar reserva aloca um assento numerado por trecho, sob um único RWMutex. Valida tudo antes de alterar qualquer trecho. A consulta não bloqueia vagas. Uma conexão interrompida antes da mensagem completa não cria reserva; se cair após a confirmação, consulte reservas ou repita a mesma chave. Uma reserva confirmada permanece até cancelamento. Cancelar uma carona cancela por inteiro as reservas que a utilizam e devolve os assentos dos demais trechos dessas reservas.
+Confirmar reserva aloca um assento numerado por trecho, com travas dos trechos adquiridas por ID e registro final protegido pelo estado local. Valida tudo antes de alterar vagas. A consulta não bloqueia assentos. Uma conexão interrompida antes da mensagem completa não cria reserva; se cair após a confirmação, consulte reservas ou repita a mesma chave. Uma reserva confirmada permanece até cancelamento. A reserva distribuída usa preparação e decisão por maioria, conforme `internal/consorcio/API.md`.
 
 Campos desconhecidos, chaves JSON duplicadas, formatos incorretos e dados incompatíveis são rejeitados. Mensagens grandes demais encerram a conexão após tentativa de resposta de erro.
 
@@ -62,7 +62,7 @@ Os campos abaixo estão presentes nas respostas, salvo os dois explicitamente op
 
 | Tipo | Campos e significado |
 | :--- | :--- |
-| Usuario | `nome`, `email`, `perfil`: strings; nunca contém senha, salt ou hash |
+| Usuario | `nome`, `email`, `perfil`: strings; nunca contém senha |
 | Sessao | `id`: identificador aleatório interno; `expira_em`: instante de expiração; `usuario`: Usuario |
 | Trecho | `id`, `carona_id`: identificadores; `origem`, `destino`: cidades; `motorista_email`: proprietário; `status`: `ATIVA` ou `CANCELADA`; `data_hora`: partida deste trecho; `distancia_km`: distância; `preco`: preço escolhido pelo motorista; `tempo_viagem_min`: duração da viagem; `tempo_parada_min`: parada após chegada; `capacidade`: total de vagas; `assentos_livres`: vagas disponíveis |
 | PassageiroConfirmado | `reserva_id`: reserva ativa; `passageiro`: Usuario; `assento`: número atribuído neste trecho |
@@ -271,7 +271,7 @@ docker compose run --rm carga -clientes 100 -vagas 5
 
 Substitua o IP pelo endereço real do laboratório e permita TCP 8080 no firewall do servidor. O nome `servidor` só resolve na rede Compose local; em hosts distintos usa-se o IP LAN e a porta publicada. Não use localhost para alcançar outra máquina.
 
-Carga nativa: `go run ./cmd/carga -servidor 127.0.0.1:8080 -clientes 100 -vagas 5`. Cria contas e duas caronas de motoristas distintos para o teste; ao terminar, cancela as caronas. Mede apenas a fase concorrente de confirmação: duração, média, p95, vazão, confirmações, recusas e erros de transporte. Os cadastros e o histórico de teste permanecem em RAM. O processo retorna código diferente de zero se falhar a integridade ou o transporte.
+Carga nativa: `go run ./cmd/carga -servidor 127.0.0.1:8080 -clientes 100 -vagas 5`. Cria contas e duas caronas de motoristas distintos para o teste; ao terminar, cancela as caronas. Mede apenas a fase concorrente de confirmação: duração, média, p95, vazão, confirmações, recusas e erros de transporte. Os cadastros e o histórico de teste permanecem no estado local e no backup, quando habilitado. O processo retorna código diferente de zero se falhar a integridade ou o transporte.
 
 ## Regras de cancelamento e avisos
 
@@ -281,10 +281,12 @@ Cancelamentos do motorista, de trecho ou carona inteira, são recusados a partir
 
 `CONSULTAR_NOTIFICACOES` recebe objeto vazio e retorna somente os avisos do usuário autenticado. Cada aviso contém `id`, `reserva_id`, `mensagem`, `criada_em` e `lida`. `LER_NOTIFICACAO` recebe `dados: {"id":"ID_DO_AVISO"}` e marca o aviso do próprio usuário como lido. Consultar não remove avisos; marcar leitura novamente não causa efeitos adicionais.
 
-O servidor cria o aviso de cancelamento na mesma seção crítica que altera a reserva. O cliente passageiro consulta avisos ao entrar e retornar ao menu; a opção 5, Verificar notificações, permite ver também o histórico. Não há envio espontâneo enquanto o usuário está parado preenchendo um campo. Os avisos permanecem em RAM durante desconexões do cliente, mas se perdem ao encerrar o servidor.
+O servidor cria o aviso de cancelamento na mesma seção crítica que altera a reserva. O cliente passageiro consulta avisos ao entrar e retornar ao menu; a opção 5, Verificar notificações, permite ver também o histórico. Não há envio espontâneo enquanto o usuário está parado preenchendo um campo. Os avisos permanecem durante desconexões do cliente e são recuperados pelo backup após reiniciar o servidor.
 
 No menu do motorista, a opção 5 cancela um trecho. A opção 2 mostra a quantidade atual de vagas e os passageiros por trecho. A interface não oferece escolha nem exibe número de assento: cada reserva ocupa uma vaga por trecho. Os números usados internamente servem ao controle e aos testes de ocupação.
 
 Publicações com a mesma rota e chaves distintas criam caronas e trechos com IDs distintos. Repetir a mesma chave e os mesmos dados continua sendo uma repetição idempotente da publicação anterior.
 
 Os menus são abertos com `go run ./cmd/cliente_motorista` e `go run ./cmd/cliente_passageiro`. A busca continua consultiva; a trava protege a confirmação e é liberada antes do envio da resposta TCP.
+
+Na consulta distribuída de reservas, o campo opcional `empresas_indisponiveis` lista donos de trechos que não responderam à verificação atual. Isso não altera o status da reserva. A confirmação entre empresas usa referências `{empresa_id, trecho_id}`, em vez de presumir que IDs locais sejam globais.

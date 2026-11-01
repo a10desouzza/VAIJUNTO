@@ -1,19 +1,31 @@
-// internal/servidor/cancelamentos_test.go - VaiJunto: sistema de caronas compartilhadas
-// Autor: Arthur Souza
-// Testes de cancelamento antes e depois do inicio da viagem e notificacoes.
+// Arquivo: internal/servidor/cancelamentos_test.go
+// Projeto: Consórcios - Problema 2
+// Autor: Arthur de Andrade Souza
+// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
+// Professor: Antonio A T R Coutinho
+// Declaração de não plágio: declaro que não apresento trabalho de terceiros
+// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
+//
+// Testa cancelamentos e notificações respeitando o início programado das viagens.
+// Verifica devolução das vagas e proteção das conexões de um itinerário já iniciado.
+// Também exercita a disputa entre cancelamento e confirmação.
 
 package servidor
 
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
 	"vaijunto/internal/protocolo"
 )
 
 // TestCancelamentoAntesDaPartidaENotificacoes: Cancela antes da partida, repete a operacao e
 // confere devolucao unica de vagas, status parcial e propriedade das notificacoes.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestCancelamentoAntesDaPartidaENotificacoes(t *testing.T) {
 	c := criarCenario(t)
 	r := c.reservar(t)
@@ -32,14 +44,14 @@ func TestCancelamentoAntesDaPartidaENotificacoes(t *testing.T) {
 		t.Fatal("reserva não cancelada")
 	}
 	for _, a := range r.Assentos {
-		if c.g.trechos[a.Trecho.ID].Assentos != 2 {
+		if c.g.trechos[a.Trecho.ID].trecho.Assentos != 2 {
 			t.Fatal("vaga não devolvida ou devolvida duas vezes")
 		}
 	}
 	if c.g.caronas[c.bc.ID].status != protocolo.Parcial {
 		t.Fatal("carona deveria ser parcial")
 	}
-	if c.g.trechos[c.bc.Trechos[1].Trecho.ID].Status != protocolo.Ativa {
+	if c.g.trechos[c.bc.Trechos[1].Trecho.ID].trecho.Status != protocolo.Ativa {
 		t.Fatal("trecho independente cancelado")
 	}
 	avisos, err := c.g.ConsultarNotificacoes(c.p)
@@ -64,6 +76,8 @@ func TestCancelamentoAntesDaPartidaENotificacoes(t *testing.T) {
 
 // TestCaronaIniciadaPermiteReservaDeTrechoFuturo: Simula carona iniciada, recusa cancelamento e
 // permite nova reserva em um trecho posterior que ainda nao partiu.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestCaronaIniciadaPermiteReservaDeTrechoFuturo(t *testing.T) {
 	c := criarCenario(t)
 	c.agora = c.agora.Add(50 * time.Minute)
@@ -86,6 +100,8 @@ func TestCaronaIniciadaPermiteReservaDeTrechoFuturo(t *testing.T) {
 
 // TestItinerarioIniciadoNaoBloqueiaTrechoSemRelacao: Cancela um trecho que nao pertence ao
 // itinerario iniciado e verifica que a reserva independente permanece ativa.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestItinerarioIniciadoNaoBloqueiaTrechoSemRelacao(t *testing.T) {
 	c := criarCenario(t)
 	r := c.reservar(t)
@@ -101,6 +117,8 @@ func TestItinerarioIniciadoNaoBloqueiaTrechoSemRelacao(t *testing.T) {
 
 // O cancelamento do segundo motorista afeta a reserva inteira, mas nao
 // cancela a oferta independente do primeiro motorista.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestCancelamentoMotoristaDoisRespeitaInicioDoItinerario(t *testing.T) {
 	for _, tipo := range []string{"trecho", "carona"} {
 		for _, deslocamento := range []time.Duration{-time.Second, 0, time.Second} {
@@ -123,7 +141,7 @@ func TestCancelamentoMotoristaDoisRespeitaInicioDoItinerario(t *testing.T) {
 						t.Fatal("cancelamento recusado alterou reserva ou avisos")
 					}
 					for _, a := range r.Assentos {
-						trecho := c.g.trechos[a.Trecho.ID]
+						trecho := c.g.trechos[a.Trecho.ID].trecho
 						if trecho.Status != protocolo.Ativa || trecho.Assentos != 1 {
 							t.Fatal("cancelamento recusado alterou trecho ou vagas")
 						}
@@ -140,11 +158,11 @@ func TestCancelamentoMotoristaDoisRespeitaInicioDoItinerario(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, a := range r.Assentos {
-					if c.g.trechos[a.Trecho.ID].Assentos != 2 || len(c.g.ocupados[a.Trecho.ID]) != 0 {
+					if c.g.trechos[a.Trecho.ID].trecho.Assentos != 2 || len(c.g.trechos[a.Trecho.ID].ocupados) != 0 {
 						t.Fatal("vagas nao devolvidas exatamente uma vez")
 					}
 				}
-				if c.g.caronas[c.ab.ID].status != protocolo.Ativa || c.g.trechos[c.ab.Trechos[0].Trecho.ID].Status != protocolo.Ativa {
+				if c.g.caronas[c.ab.ID].status != protocolo.Ativa || c.g.trechos[c.ab.Trechos[0].Trecho.ID].trecho.Status != protocolo.Ativa {
 					t.Fatal("oferta do motorista 1 foi cancelada indevidamente")
 				}
 				busca, err := c.g.Buscar(c.p, protocolo.BuscaItinerario{Origem: "B", Destino: "C", Data: "2099-10-01"})
@@ -157,5 +175,65 @@ func TestCancelamentoMotoristaDoisRespeitaInicioDoItinerario(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestCancelamentoEConfirmacaoConcorrentes: Dispara confirmacoes e cancelamentos simultaneos. Ao
+// final confere vagas devolvidas e ausencia de reserva ativa no trecho cancelado.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
+func TestCancelamentoEConfirmacaoConcorrentes(t *testing.T) {
+	c := criarCenario(t)
+	inicio := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-inicio
+			if i%2 == 0 {
+				c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: fmt.Sprint(i), TrechosIDs: []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID}})
+			} else {
+				c.g.CancelarTrecho(c.m2, c.bc.Trechos[0].Trecho.ID)
+			}
+		}()
+	}
+	close(inicio)
+	wg.Wait()
+	for _, id := range []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID} {
+		if c.g.trechos[id].trecho.Assentos != 2 || len(c.g.trechos[id].ocupados) != 0 {
+			t.Fatal("vagas inconsistentes após disputa")
+		}
+	}
+	for _, r := range c.g.reservas {
+		if r.Status != protocolo.Cancelada {
+			t.Fatal("reserva ativa em trecho cancelado")
+		}
+	}
+}
+
+// Cancelar varios trechos da mesma reserva devolve cada vaga e notifica apenas uma vez.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
+func TestCancelarCaronaComReservaEmVariosTrechos(t *testing.T) {
+	c := criarCenario(t)
+	ids := []string{c.bc.Trechos[0].Trecho.ID, c.bc.Trechos[1].Trecho.ID}
+	r, err := c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "bcd", TrechosIDs: ids})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := c.g.CancelarCarona(c.m2, c.bc.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range ids {
+		if c.g.trechos[id].trecho.Assentos != 2 || len(c.g.trechos[id].ocupados) != 0 {
+			t.Fatal("vagas devolvidas incorretamente")
+		}
+	}
+	avisos, err := c.g.ConsultarNotificacoes(c.p)
+	if err != nil || len(avisos) != 1 || avisos[0].ReservaID != r.ID || c.g.reservas[r.ID].Status != protocolo.Cancelada {
+		t.Fatalf("cancelamento ou aviso duplicado: %+v %v", avisos, err)
 	}
 }

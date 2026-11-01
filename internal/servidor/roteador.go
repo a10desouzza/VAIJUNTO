@@ -1,6 +1,14 @@
-// internal/servidor/roteador.go - VaiJunto: sistema de caronas compartilhadas
-// Autor: Arthur Souza
-// Interpretacao do protocolo. Valida o envelope e converte os dados conforme a acao solicitada.
+// Arquivo: internal/servidor/roteador.go
+// Projeto: Consórcios - Problema 2
+// Autor: Arthur de Andrade Souza
+// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
+// Professor: Antonio A T R Coutinho
+// Declaração de não plágio: declaro que não apresento trabalho de terceiros
+// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
+//
+// Interpreta o envelope JSON recebido e identifica a ação solicitada pelo cliente.
+// Rejeita mensagens inválidas e converte os dados para o tipo esperado pela operação.
+// Encaminha a chamada, salva alterações e produz a resposta padronizada de sucesso ou erro.
 
 package servidor
 
@@ -9,11 +17,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"unicode/utf8"
+
 	"vaijunto/internal/protocolo"
 )
 
-// verificarJSON: percorre objetos e listas para rejeitar chaves duplicadas, inclusive nos dados
-// internos. Retorna: nil quando nao encontra erro; error de leitura ou campo duplicado.
+// verificarJSON percorre objetos e listas para rejeitar chaves duplicadas, inclusive nos dados
+// internos.
+// Recebe: d *json.Decoder.
+// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func verificarJSON(d *json.Decoder) error {
 	elemento, err := d.Token()
 	if err != nil {
@@ -53,9 +64,10 @@ func verificarJSON(d *json.Decoder) error {
 	return err
 }
 
-// decodificar: exige um unico objeto JSON UTF-8, rejeita campos desconhecidos e preenche alvo ou
-// retorna erro. Retorna: nil com alvo preenchido, ou error de formato, UTF-8, duplicidade ou
-// campos desconhecidos.
+// decodificar exige um unico objeto JSON UTF-8, rejeita campos desconhecidos e preenche alvo ou
+// retorna erro.
+// Recebe: dados []byte, alvo any.
+// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func decodificar(dados []byte, alvo any) error {
 	dados = bytes.TrimSpace(dados)
 	if len(dados) == 0 || dados[0] != '{' || !utf8.Valid(dados) || !json.Valid(dados) {
@@ -70,19 +82,44 @@ func decodificar(dados []byte, alvo any) error {
 	return d.Decode(alvo)
 }
 
-// ProcessarMensagem: transforma o resultado da operacao em uma resposta padrao de SUCESSO ou ERRO.
-// Retorna: Bytes da resposta JSON terminada por quebra de linha, com status SUCESSO ou ERRO.
+// ProcessarMensagem transforma o resultado da operacao em uma resposta padrao de SUCESSO ou ERRO.
+// Recebe: mensagem []byte, g *GrafoItinerarios.
+// Retorna: a resposta JSON padronizada em bytes, terminada por quebra de linha, inclusive para operacoes recusadas.
 func ProcessarMensagem(mensagem []byte, g *GrafoItinerarios) []byte {
 	dados, err := processar(mensagem, g)
+	if !mensagemDeConsulta(mensagem) {
+		if backupErr := g.SalvarBackup(); backupErr != nil {
+			g.logger.Printf("BACKUP erro=%v", backupErr)
+			err = backupErr
+		}
+	}
 	if err != nil {
 		return codificarResposta(protocolo.Resposta{Status: protocolo.Erro, Mensagem: err.Error()})
 	}
 	return codificarResposta(protocolo.Resposta{Status: protocolo.Sucesso, Mensagem: "Operação concluída.", Dados: dados})
 }
 
-// processar: le o envelope e chama a funcao da acao. Cada operacao possui seu proprio tipo de
-// dados. Retorna: Dados da operacao como any e nil no sucesso, ou error que sera convertido em
-// resposta.
+// Consultas nao gravam o arquivo. Uma mensagem desconhecida segue pela fila de
+// escrita para nunca classificar uma alteracao como leitura por engano.
+// Recebe: mensagem []byte.
+// Retorna: bool.
+func mensagemDeConsulta(mensagem []byte) bool {
+	var req protocolo.Requisicao
+	if json.Unmarshal(mensagem, &req) != nil {
+		return false
+	}
+	switch req.Acao {
+	case protocolo.AcaoBuscar, protocolo.AcaoCaronas, protocolo.AcaoReservas, protocolo.AcaoNotificacoes:
+		return true
+	default:
+		return false
+	}
+}
+
+// processar le o envelope e chama a funcao da acao. Cada operacao possui seu proprio tipo de
+// dados.
+// Recebe: mensagem []byte, g *GrafoItinerarios.
+// Retorna: (any, error). Em falha, devolve error; em sucesso, erro nil.
 func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 	if len(mensagem) >= protocolo.LimiteMensagem {
 		return nil, fmt.Errorf("mensagem excede o limite de 1 MiB")
@@ -118,11 +155,17 @@ func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 		if err := decodificar(req.Dados, &p); err != nil {
 			return nil, err
 		}
+		if g.distribuido != nil {
+			return g.distribuido.buscar(req.SessaoID, p)
+		}
 		return g.Buscar(req.SessaoID, p)
 	case protocolo.AcaoConfirmar:
 		var p protocolo.ReservaItinerario
 		if err := decodificar(req.Dados, &p); err != nil {
 			return nil, err
+		}
+		if g.distribuido != nil {
+			return g.distribuido.reservar(req.SessaoID, p)
 		}
 		return g.Confirmar(req.SessaoID, p)
 	case protocolo.AcaoCancelarCarona, protocolo.AcaoCancelarReserva, protocolo.AcaoCancelarTrecho, protocolo.AcaoLerNotificacao:
@@ -131,13 +174,22 @@ func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 			return nil, err
 		}
 		if req.Acao == protocolo.AcaoCancelarCarona {
+			if g.distribuido != nil {
+				return g.distribuido.cancelarOferta(req.SessaoID, p.ID, false)
+			}
 			return g.CancelarCarona(req.SessaoID, p.ID)
 		}
 		if req.Acao == protocolo.AcaoCancelarTrecho {
+			if g.distribuido != nil {
+				return g.distribuido.cancelarOferta(req.SessaoID, p.ID, true)
+			}
 			return g.CancelarTrecho(req.SessaoID, p.ID)
 		}
 		if req.Acao == protocolo.AcaoLerNotificacao {
 			return nil, g.LerNotificacao(req.SessaoID, p.ID)
+		}
+		if g.distribuido != nil {
+			return g.distribuido.cancelar(req.SessaoID, p.ID)
 		}
 		return g.CancelarReserva(req.SessaoID, p.ID)
 	case protocolo.AcaoCaronas, protocolo.AcaoReservas, protocolo.AcaoSair, protocolo.AcaoNotificacoes:
@@ -151,6 +203,9 @@ func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 			return g.ConsultarCaronas(req.SessaoID)
 		}
 		if req.Acao == protocolo.AcaoReservas {
+			if g.distribuido != nil {
+				return g.distribuido.consultar(req.SessaoID)
+			}
 			return g.ConsultarReservas(req.SessaoID)
 		}
 		return nil, g.Desconectar(req.SessaoID)
@@ -159,8 +214,9 @@ func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 	}
 }
 
-// codificarResposta: serializa a resposta e acrescenta a quebra de linha exigida pelo protocolo.
-// Retorna: Linha JSON em bytes; se a serializacao falhar, devolve uma resposta fixa de erro.
+// codificarResposta serializa a resposta e acrescenta a quebra de linha exigida pelo protocolo.
+// Recebe: r protocolo.Resposta.
+// Retorna: []byte.
 func codificarResposta(r protocolo.Resposta) []byte {
 	dados, err := json.Marshal(r)
 	if err != nil {

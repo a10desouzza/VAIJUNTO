@@ -1,6 +1,13 @@
-// internal/cliente/campos_test.go - VaiJunto: sistema de caronas compartilhadas
-// Autor: Arthur Souza
-// Testes de campos invalidos e retorno ao menu antes do envio.
+// Arquivo: internal/cliente/campos_test.go
+// Projeto: Consórcios - Problema 2
+// Autor: Arthur de Andrade Souza
+// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
+// Professor: Antonio A T R Coutinho
+// Declaração de não plágio: declaro que não apresento trabalho de terceiros
+// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
+//
+// Testa os formulários sem exigir digitação manual durante a execução.
+// Verifica repetição de campos inválidos, paradas intermediárias e saída por /voltar.
 
 package cliente
 
@@ -10,9 +17,13 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
 	"vaijunto/internal/protocolo"
 )
 
+// TestPublicarPerguntaParadaSomenteNasCidadesIntermediarias verifica o cenario: Publicar Pergunta Parada Somente Nas Cidades Intermediarias.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestPublicarPerguntaParadaSomenteNasCidadesIntermediarias(t *testing.T) {
 	//testa 4 situacoes
 	for _, n := range []int{2, 3, 8, 21} {
@@ -56,6 +67,8 @@ func TestPublicarPerguntaParadaSomenteNasCidadesIntermediarias(t *testing.T) {
 
 // TestCamposRepetemAteValorValido: Fornece valores invalidos seguidos dos validos e verifica a
 // repeticao dos campos e as mensagens de erro.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestCamposRepetemAteValorValido(t *testing.T) {
 	var saida bytes.Buffer
 	// cria um menu de teste com entradas invalidas e validas
@@ -84,6 +97,8 @@ func TestCamposRepetemAteValorValido(t *testing.T) {
 
 // TestVoltarAbandonaCadastroSemRede: Interrompe o cadastro com /voltar e confere que nao houve
 // tentativa de envio nem codigos de cor na saida.
+// Recebe: t *testing.T.
+// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestVoltarAbandonaCadastroSemRede(t *testing.T) {
 	var saida bytes.Buffer
 	err := ExecutarMenu("127.0.0.1:1", protocolo.Passageiro, strings.NewReader("2\nAna\n/voltar\n0\n"), &saida)
