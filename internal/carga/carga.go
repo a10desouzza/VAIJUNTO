@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Simula clientes concorrentes no servidor local e calcula métricas de desempenho e integridade.
 package carga
 
 import (
@@ -15,7 +17,6 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-// Metricas resume o resultado da simulacao.
 type Metricas struct {
 	Empresas           int     `json:"empresas,omitempty"`
 	Buscas             int     `json:"buscas,omitempty"`
@@ -33,6 +34,7 @@ type Metricas struct {
 }
 
 // chamar envia a operacao TCP e converte os dados para alvo. Propaga falhas como erro.
+// Recebe: endereço, ação, sessão, dados e ponteiro alvo.
 func chamar(endereco, acao, sessaoID string, dados any, alvo any) error {
 	raw, err := json.Marshal(dados)
 	if err != nil {
@@ -56,6 +58,7 @@ func chamar(endereco, acao, sessaoID string, dados any, alvo any) error {
 }
 
 // criarUsuario cadastra uma conta de teste e recebe a sessao criada automaticamente.
+// Recebe: endereço, e-mail e perfil do usuário de carga.
 func criarUsuario(endereco, email, perfil string) (string, error) {
 	senha := "senha-carga-" + email
 	var sessao protocolo.Sessao
@@ -63,8 +66,8 @@ func criarUsuario(endereco, email, perfil string) (string, error) {
 	return sessao.ID, err
 }
 
-// Executar Cadastra dois motoristas, publica dois trechos conectados e autentica os passageiros.
-// concluir a fase de uso, tenta cancelar as ofertas e encerrar as sessoes dos passageiros.
+// Executar Cadastra dois motoristas, publica dois trechos conectados e autentica os passageiros. concluir a fase de uso, tenta cancelar as ofertas e encerrar as sessoes dos passageiros.
+// Recebe: endereço TCP, quantidade de clientes e vagas por trecho.
 func Executar(endereco string, quantidade, vagas int) (Metricas, error) {
 	m := Metricas{Clientes: quantidade, VagasPorTrecho: vagas}
 	if quantidade < 1 || quantidade > 200 || vagas < 1 || vagas > 100 {
@@ -114,13 +117,14 @@ func Executar(endereco string, quantidade, vagas int) (Metricas, error) {
 	}()
 	ids := []string{caronas[0].Trechos[0].Trecho.ID, caronas[1].Trechos[0].Trecho.ID}
 	pedido, _ := json.Marshal(protocolo.ReservaItinerario{Chave: "unica", TrechosIDs: ids})
+
 	type resultado struct {
 		resposta *protocolo.Resposta
 		err      error
 		duracao  time.Duration
 	}
 	resultados := make([]resultado, quantidade)
-	/* Barreira de inicio: todas as goroutines esperam o fechamento do mesmo canal. */
+
 	inicio := make(chan struct{})
 	var wg sync.WaitGroup
 	for i, sessaoID := range sessoes {
@@ -128,10 +132,10 @@ func Executar(endereco string, quantidade, vagas int) (Metricas, error) {
 		go func() {
 			defer wg.Done()
 			<-inicio
-			/* A medicao comeca apos preparar usuarios e ofertas; cobre a disputa pelas reservas. */
+
 			instante := time.Now()
 			resposta, err := cliente.EnviarRequisicao(endereco, protocolo.Requisicao{Acao: protocolo.AcaoConfirmar, SessaoID: sessaoID, Dados: pedido})
-			/* Cada goroutine escreve em seu indice; a leitura so ocorre depois do Wait. */
+
 			resultados[i] = resultado{resposta: resposta, err: err, duracao: time.Since(instante)}
 		}()
 	}
@@ -199,6 +203,7 @@ func Executar(endereco string, quantidade, vagas int) (Metricas, error) {
 }
 
 // calcularTempos usa o mesmo cálculo de média, p95 e vazão nos dois cenários.
+// Recebe: latências em milissegundos, duração e métricas m.
 func (m *Metricas) calcularTempos(latencias []float64, duracao time.Duration) {
 	m.LatenciaMediaMS = 0
 	for _, latencia := range latencias {

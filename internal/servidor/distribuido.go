@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Define registros, travas e autenticação do 2PC, mantém Lamport e propaga decisões aos envolvidos.
 package servidor
 
 import (
@@ -21,9 +23,8 @@ import (
 
 const pendente = "PENDENTE"
 
-// So metadados de coordenacao circulam entre testemunhas, nunca contas ou
-// copias das bases de caronas. Cada testemunha salva seus registros no proprio backup.
 type metaTransacao struct {
+	Lamport       uint64            `json:"lamport,omitempty"`
 	ID            string            `json:"transacao_id"`
 	Origem        string            `json:"empresa_origem"`
 	Inicio        string            `json:"inicio_itinerario"`
@@ -34,56 +35,29 @@ type metaTransacao struct {
 	Geracoes      map[string]string `json:"geracoes"`
 }
 
-type cedula struct {
-	Numero  uint64 `json:"numero"`
-	Empresa string `json:"empresa_id"`
-}
-
-// maior compara cedulas por numero e, em empate, pelo identificador da empresa.
-func (a cedula) maior(b cedula) bool {
-	return a.Numero > b.Numero || a.Numero == b.Numero && a.Empresa > b.Empresa
-}
-
 type decisao struct {
 	Estado  string            `json:"estado"`
 	Motivo  string            `json:"motivo,omitempty"`
 	Recibos map[string]string `json:"recibos,omitempty"`
 }
 
-type certificado struct {
-	Meta   metaTransacao     `json:"meta"`
-	Cedula cedula            `json:"cedula"`
-	Valor  decisao           `json:"valor"`
-	Votos  map[string]string `json:"votos"`
+type decisaoFinal struct {
+	Meta       metaTransacao `json:"meta"`
+	Valor      decisao       `json:"valor"`
+	Assinatura string        `json:"assinatura"`
 }
 
-type registroConsenso struct {
-	Meta             metaTransacao
-	Promessa, Aceita cedula
-	Valor            *decisao
-	Final            *certificado
-	Aplicado         bool
-	Criado           time.Time
+type registroTransacao struct {
+	Meta     metaTransacao
+	Final    *decisaoFinal
+	Aplicado bool
+	Criado   time.Time
 }
 
 type operacaoOrigem struct {
 	Meta                   metaTransacao
 	Assinatura, Passageiro string
 	Reserva                protocolo.Reserva
-}
-
-type mensagemConsenso struct {
-	Meta   metaTransacao `json:"meta"`
-	Cedula cedula        `json:"cedula"`
-	Valor  *decisao      `json:"valor,omitempty"`
-}
-
-type respostaConsenso struct {
-	Promessa cedula       `json:"promessa"`
-	Aceita   cedula       `json:"aceita"`
-	Valor    *decisao     `json:"valor,omitempty"`
-	Final    *certificado `json:"final,omitempty"`
-	Voto     string       `json:"voto,omitempty"`
 }
 
 type prepararRPC struct {
@@ -101,31 +75,42 @@ type saudeEmpresa struct {
 	Geracao string `json:"geracao"`
 }
 
-// Distribuido implementa consenso de valor unico por transacao (Paxos basico)
-// e aplica a decisao nos donos das vagas. Nao ha coordenador fixo.
-// Reiniciar com backup preserva promessas e geracao. Sem ele, a nova geracao
-// impede que uma testemunha que esqueceu seu historico vote em transacoes antigas.
 type Distribuido struct {
-	g                           *GrafoItinerarios
-	id, token, geracao          string
-	pares                       map[string]string
-	membros                     []string
-	cliente                     *http.Client
-	catalogo                    *consorcio.API
-	mu                          sync.Mutex
-	relogio                     uint64
-	registros                   map[string]*registroConsenso
-	origens                     map[string]*operacaoOrigem
-	locais, propostas, chamadas sync.Map
-	entregas                    sync.Map
-	limite                      chan struct{}
-	abortarApos                 time.Duration
-	// Pontos de injecao de falha, usados pelos testes sem alterar o protocolo.
+	g                          *GrafoItinerarios
+	id, token, geracao         string
+	pares                      map[string]string
+	membros                    []string
+	cliente                    *http.Client
+	catalogo                   *consorcio.API
+	mu                         sync.Mutex
+	sequencia                  uint64
+	relogio                    uint64
+	registros                  map[string]*registroTransacao
+	origens                    map[string]*operacaoOrigem
+	locais, decisoes, chamadas sync.Map
+	entregas                   sync.Map
+	observadas                 sync.Map
+	limite                     chan struct{}
+	abortarApos                time.Duration
+
 	aposPreparar func() error
-	aposQuorum   func() error
+	aposDecidir  func() error
 }
 
-// NovoDistribuido configura as tres testemunhas e a identidade local da empresa.
+// evento avanca o relogio logico: evento local/envio L+1; recepcao max(L,R)+1. Nao consulta o horario fisico e nao concede prioridade sobre assentos.
+// Recebe: marca recebida, ou zero para evento local/envio.
+func (d *Distribuido) evento(recebido uint64) uint64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if recebido > d.relogio {
+		d.relogio = recebido
+	}
+	d.relogio++
+	return d.relogio
+}
+
+// NovoDistribuido configura a empresa e seus dois pares; nao abre portas.
+// Recebe: estado local, identidade, token, dois pares, catálogo e timeout.
 func NovoDistribuido(g *GrafoItinerarios, id, token string, pares []configuracao.Empresa, api *consorcio.API, timeout time.Duration) (*Distribuido, error) {
 	if len(pares) != 2 || timeout <= 0 || len(token) < 16 || api == nil {
 		return nil, fmt.Errorf("configure três empresas, catálogo, token e timeout")
@@ -143,7 +128,7 @@ func NovoDistribuido(g *GrafoItinerarios, id, token string, pares []configuracao
 		pares:       make(map[string]string),
 		membros:     []string{id},
 		catalogo:    api,
-		registros:   make(map[string]*registroConsenso),
+		registros:   make(map[string]*registroTransacao),
 		origens:     make(map[string]*operacaoOrigem),
 		limite:      make(chan struct{}, 64),
 		abortarApos: 10 * time.Second,
@@ -167,6 +152,7 @@ func NovoDistribuido(g *GrafoItinerarios, id, token string, pares []configuracao
 }
 
 // travarOperacao serializa chamadas da mesma operacao por identificador, sem bloquear outras transacoes.
+// Recebe: mapa de mutexes e ID da operação.
 func travarOperacao(m *sync.Map, id string) func() {
 	v, _ := m.LoadOrStore(id, &sync.Mutex{})
 	mu := v.(*sync.Mutex)
@@ -175,6 +161,7 @@ func travarOperacao(m *sync.Map, id string) func() {
 }
 
 // copiaJSON separa mapas e listas dos registros internos antes de liberar a trava.
+// Recebe: valor serializável pelos modelos internos.
 func copiaJSON[T any](v T) T {
 	dados, _ := json.Marshal(v)
 	var copia T
@@ -183,6 +170,7 @@ func copiaJSON[T any](v T) T {
 }
 
 // hashJSON calcula o resumo SHA-256 da representacao JSON dos metadados.
+// Recebe: valor serializável.
 func hashJSON(v any) string {
 	b, _ := json.Marshal(v)
 	s := sha256.Sum256(b)
@@ -190,6 +178,7 @@ func hashJSON(v any) string {
 }
 
 // assinar calcula HMAC-SHA256 com o token do consorcio para autenticar metadados de coordenacao.
+// Recebe: valor serializável e token do componente d.
 func (d *Distribuido) assinar(v any) string {
 	b, _ := json.Marshal(v)
 	h := hmac.New(sha256.New, []byte(d.token))
@@ -198,21 +187,13 @@ func (d *Distribuido) assinar(v any) string {
 }
 
 // recibo produz a autenticacao da preparacao de um participante para os metadados informados.
+// Recebe: metadados e ID do participante.
 func (d *Distribuido) recibo(m metaTransacao, id string) string {
 	return d.assinar([]string{"preparada", m.ID, id, m.Hashes[id], m.Geracoes[id]})
 }
 
-// voto produz a autenticacao de um voto para a cedula, decisao e empresa informadas.
-func (d *Distribuido) voto(m metaTransacao, b cedula, v decisao, id string) string {
-	return d.assinar(struct {
-		Meta    metaTransacao
-		Cedula  cedula
-		Valor   decisao
-		Empresa string
-	}{m, b, v, id})
-}
-
 // contem verifica se um identificador pertence a lista recebida.
+// Recebe: lista de IDs e ID procurado.
 func contem(ids []string, id string) bool {
 	for _, v := range ids {
 		if v == id {
@@ -222,15 +203,17 @@ func contem(ids []string, id string) bool {
 	return false
 }
 
-// propagar entrega a decisao as testemunhas que pertencem a geracao da operacao.
-func (d *Distribuido) propagar(ctx context.Context, c certificado) map[string]resultadoRPC {
+// propagar repete a fase 2 nos donos e na origem; um terceiro sem trechos nao e necessario.
+// Recebe: contexto e decisão final.
+func (d *Distribuido) propagar(ctx context.Context, c decisaoFinal) map[string]resultadoRPC {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	rs := make(map[string]resultadoRPC)
-	for _, id := range d.membros {
-		if c.Meta.Geracoes[id] == "" {
-			continue
-		}
+
+	if d.g.SalvarBackup() != nil {
+		return rs
+	}
+	for _, id := range destinos(c.Meta) {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
@@ -244,48 +227,4 @@ func (d *Distribuido) propagar(ctx context.Context, c certificado) map[string]re
 	}
 	wg.Wait()
 	return rs
-}
-
-// Timeouts apenas iniciam nova proposta; somente uma decisao certificada pode
-// liberar vagas. Processos reiniciados com outra geracao recusam transacoes antigas.
-func (d *Distribuido) Recuperar(ctx context.Context) {
-	t := time.NewTicker(time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			d.recuperar(ctx)
-		}
-	}
-}
-
-// recuperar retoma decisoes pendentes sem liberar vagas por um timeout isolado.
-func (d *Distribuido) recuperar(ctx context.Context) {
-	d.mu.Lock()
-	rs := copiaJSON(d.registros)
-	d.mu.Unlock()
-	for id, r := range rs {
-		if ctx.Err() != nil {
-			return
-		}
-		if r.Final != nil {
-			if _, ok := d.entregas.Load(id); !ok {
-				entregues := d.propagar(ctx, *r.Final)
-				if len(entregues) == len(r.Meta.Geracoes) {
-					d.entregas.Store(id, true)
-				}
-			}
-			continue
-		}
-		if time.Since(r.Criado) < d.abortarApos {
-			continue
-		}
-		c, err := d.decidir(ctx, r.Meta, decisao{Estado: "ABORTAR", Motivo: "operação interrompida; recuperação por maioria"})
-		if err == nil {
-			d.propagar(ctx, c)
-		}
-	}
-	d.atualizarOrigens(ctx)
 }

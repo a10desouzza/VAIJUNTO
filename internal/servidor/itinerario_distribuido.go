@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Combina ofertas do consórcio e organiza a validação e a preparação de reservas distribuídas.
 package servidor
 
 import (
@@ -12,6 +14,7 @@ import (
 )
 
 // buscar combina ofertas publicas e informa quando alguma empresa nao respondeu.
+// Recebe: sessão do passageiro e critérios.
 func (d *Distribuido) buscar(sessao string, b protocolo.BuscaItinerario) (protocolo.ResultadoBusca, error) {
 	d.g.mu.RLock()
 	_, err := d.g.autorizar(sessao, protocolo.Passageiro)
@@ -45,6 +48,7 @@ func (d *Distribuido) buscar(sessao string, b protocolo.BuscaItinerario) (protoc
 }
 
 // reservar prepara os donos em ordem e coordena uma decisao para o itinerario inteiro.
+// Recebe: sessão e seleção de trechos com chave.
 func (d *Distribuido) reservar(sessao string, p protocolo.ReservaItinerario) (protocolo.Reserva, error) {
 	if err := validarChave(p.Chave); err != nil {
 		return protocolo.Reserva{}, err
@@ -85,7 +89,7 @@ func (d *Distribuido) reservar(sessao string, p protocolo.ReservaItinerario) (pr
 		d.atualizarOrigem(ctx, id)
 		return d.reservaOrigem(id), nil
 	}
-	// Uma viagem inteiramente local nao depende de testemunhas remotas.
+
 	soLocal := true
 	idsLocais := make([]string, 0, len(refs))
 	for _, ref := range refs {
@@ -110,8 +114,8 @@ func (d *Distribuido) reservar(sessao string, p protocolo.ReservaItinerario) (pr
 		return protocolo.Reserva{}, fmt.Errorf("servidor ocupado; tente novamente")
 	}
 	gs := d.geracoes(ctx)
-	if len(gs) < 2 {
-		return protocolo.Reserva{}, fmt.Errorf("duas empresas precisam estar disponíveis para decidir")
+	if gs[d.id] == "" {
+		return protocolo.Reserva{}, fmt.Errorf("coordenador indisponivel")
 	}
 	c := d.catalogo.ConsultarTodos(ctx)
 	catalogo := make(map[protocolo.ReferenciaTrecho]protocolo.Trecho)
@@ -154,7 +158,7 @@ func (d *Distribuido) reservar(sessao string, p protocolo.ReservaItinerario) (pr
 		participantes = append(participantes, empresa)
 	}
 	sort.Strings(participantes)
-	m := metaTransacao{ID: id, Origem: d.id, Inicio: r.InicioItinerario, Tipo: "RESERVAR", Participantes: participantes, Hashes: make(map[string]string), Geracoes: gs}
+	m := metaTransacao{Lamport: d.evento(0), ID: id, Origem: d.id, Inicio: r.InicioItinerario, Tipo: "RESERVAR", Participantes: participantes, Hashes: make(map[string]string), Geracoes: gs}
 	pedidos := make(map[string]protocolo.PedidoPreparacao)
 	for _, empresa := range participantes {
 		q := protocolo.PedidoPreparacao{TransacaoID: id, EmpresaOrigem: d.id, PassageiroRef: r.PassageiroRef, InicioItinerario: r.InicioItinerario, Participantes: participantes, TrechosIDs: grupos[empresa]}
@@ -163,7 +167,7 @@ func (d *Distribuido) reservar(sessao string, p protocolo.ReservaItinerario) (pr
 	}
 	d.mu.Lock()
 	d.origens[id] = &operacaoOrigem{Meta: m, Assinatura: hashJSON(refs), Passageiro: u.Email, Reserva: r}
-	d.registros[id] = &registroConsenso{Meta: m, Criado: time.Now()}
+	d.registros[id] = &registroTransacao{Meta: m, Criado: time.Now()}
 	d.mu.Unlock()
 	if err := d.g.SalvarBackup(); err != nil {
 		return protocolo.Reserva{}, err
@@ -175,16 +179,17 @@ func (d *Distribuido) reservar(sessao string, p protocolo.ReservaItinerario) (pr
 			return d.reservaOrigem(id), err
 		}
 	}
-	cert, err := d.decidir(ctx, m, valor)
+	final, err := d.decidir(ctx, m, valor)
 	if err != nil {
 		return d.reservaOrigem(id), nil
 	}
-	d.propagar(ctx, cert)
+	d.propagar(ctx, final)
 	d.atualizarOrigem(ctx, id)
 	return d.reservaOrigem(id), nil
 }
 
 // trechoDoCatalogo converte um trecho publico do catalogo para o modelo utilizado nas buscas e reservas.
+// Recebe: oferta pública de uma empresa.
 func trechoDoCatalogo(t consorcio.TrechoPublico) protocolo.Trecho {
 	return protocolo.Trecho{
 		EmpresaID: t.EmpresaID, ID: t.ID, CaronaID: t.CaronaID,
@@ -196,12 +201,10 @@ func trechoDoCatalogo(t consorcio.TrechoPublico) protocolo.Trecho {
 }
 
 // prepararParticipantes prepara os donos em ordem de ID; ao primeiro conflito propoe aborto, sem esperar pela liberacao da vaga.
+// Recebe: contexto, metadados e pedidos por empresa.
 func (d *Distribuido) prepararParticipantes(ctx context.Context, m metaTransacao, pedidos map[string]protocolo.PedidoPreparacao) decisao {
 	v := decisao{Estado: "CONFIRMAR", Recibos: make(map[string]string)}
-	// Todos adquirem empresas na mesma ordem e o dono recusa conflitos sem
-	// aguardar recursos: nenhuma transacao mantem uma espera circular remota.
-	// Para a disputa do mesmo A+B, so quem preparar o primeiro dono avanca ao
-	// segundo. A ordem de admissao no dono desempata as duas requisicoes.
+
 	for _, empresa := range m.Participantes {
 		var r resultadoRPC
 		err := d.chamar(ctx, empresa, "preparar", prepararRPC{m, pedidos[empresa]}, &r)

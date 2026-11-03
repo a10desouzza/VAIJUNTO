@@ -1,248 +1,183 @@
-# Protocolo REST entre empresas
+# API REST e protocolo 2PC
 
-Especificação técnica da integração. Os comandos de execução e os backups estão descritos no README do Problema 2.
+Cada empresa mantém suas contas, ofertas e assentos em memória e em um arquivo local privado. As empresas se comunicam por HTTP/JSON; os clientes continuam usando sockets TCP nativos com NDJSON. Não há servidor central, banco compartilhado ou serviço externo de coordenação.
 
-## Modelo de execução
+## Coordenador por transação
 
-Três processos, com identidades e endereços configurados localmente. Cada empresa
-controla suas contas, caronas e assentos. O passageiro acessa somente sua própria
-empresa por TCP; as empresas cooperam por HTTP/JSON. Não há banco, arquivo de
-estado compartilhado, serviço externo de coordenação ou servidor central. Cada empresa salva seu próprio arquivo local de recuperação.
+A empresa que recebe a reserva é o coordenador daquela transação. Uma reserva iniciada na VaiJunto é coordenada pela VaiJunto; outra iniciada na Minas é coordenada pela Minas. Não existe coordenador fixo para todo o consórcio.
 
-Os participantes compartilham somente metadados da transação: identificadores,
-participantes, hashes dos pedidos, geração dos processos, promessas e decisões.
-As ofertas remotas são cópias temporárias para consulta, não uma base replicada.
+A implementação usa **Commit em Duas Fases (2PC) com relógio de Lamport**, sem eleição nem decisão por votação. A terceira empresa não participa da decisão quando não é origem nem dona de um trecho envolvido.
 
-Uma empresa sem backup gera uma identificação aleatória ao iniciar. Transações incluem as
-gerações que as testemunhas tinham quando a operação começou. Uma instância com
-RAM nova sem backup não pode votar ou aplicar transações da geração perdida. Com o backup atual, a geração e as promessas são restauradas antes de abrir os atendimentos.
+1. **Preparar:** o coordenador pede a cada dono que separe seus assentos. O dono verifica e altera as vagas sob trava e salva a preparação antes de responder SIM.
+2. **Decidir:** se todos responderem SIM, o coordenador grava CONFIRMAR no seu backup. Se houver recusa ou falha antes da decisão, grava ABORTAR. Só depois envia o resultado aos donos.
 
-## Autenticação e transporte
+A decisão registrada é imutável. Respostas perdidas são tratadas repetindo a mesma operação, sem ocupar ou devolver o mesmo assento novamente. A origem só apresenta a reserva como ATIVA após receber a confirmação de aplicação de todos os donos.
 
-Todas as chamadas exigem `Authorization: Bearer TOKEN`, configurado igualmente
-nas três empresas por `VAIJUNTO_TOKEN_CONSORCIO` (mínimo de 16 caracteres).
-As mensagens são JSON UTF-8. Os POSTs de coordenação têm limite de 1 MiB e
-rejeitam campos desconhecidos, chaves duplicadas e valores adicionais.
-Recibos e votos usam HMAC-SHA256 para validar certificados completos; isso não
-é criptografia de transporte. O modelo é de falhas por interrupção, não de
-empresas maliciosas que conhecem o token compartilhado.
+## Recursos e autenticação
 
-## Recursos
+Todas as rotas exigem `Authorization: Bearer TOKEN`, com o mesmo token de pelo menos 16 bytes em cada empresa. Recibos e decisões usam HMAC-SHA256 com essa chave compartilhada. O modelo considera falhas por interrupção e perda de comunicação; não empresas maliciosas com acesso ao token. HTTP não cifra o tráfego e a porta publicada precisa estar acessível na rede.
 
-| Método | Caminho | Finalidade |
+| Método | Caminho | Responsabilidade |
 |---|---|---|
-| GET | `/saude` | Identidade e resposta básica da API de catálogo |
-| GET | `/trechos` | Ofertas locais ativas com vagas e partida futura |
-| GET | `/consorcio/trechos` | Consulta paralela e parcial aos catálogos |
-| GET | `/distribuido/saude` | Identidade e geração do processo |
-| POST | `/distribuido/preparar` | Preparar os assentos locais ou votar na possibilidade de cancelar |
-| POST | `/distribuido/prometer` | Prometer uma cédula e informar o último valor aceito |
-| POST | `/distribuido/aceitar` | Aceitar uma proposta compatível com a promessa |
-| POST | `/distribuido/finalizar` | Verificar um certificado de maioria e aplicar a decisão |
+| GET | `/saude` | Identidade e estado básico do catálogo |
+| GET | `/trechos` | Somente ofertas locais disponíveis, sem contas ou dados pessoais |
+| GET | `/consorcio/trechos` | Consulta paralela aos catálogos locais dos pares |
+| GET | `/distribuido/saude` | Identidade e geração do histórico local |
+| POST | `/distribuido/preparar` | Fase 1: separar vagas locais ou validar um cancelamento |
+| POST | `/distribuido/finalizar` | Fase 2: aplicar a decisão autenticada |
+| GET | `/distribuido/estado?id=ID` | Consultar a decisão no coordenador da transação |
+| POST | `/distribuido/cancelar` | Encaminhar ao coordenador original o cancelamento solicitado em outro dono |
 
-O catálogo devolve `empresa_id` e `trechos`. Cada trecho tem `empresa_id`,
-`trecho_id`, `carona_id`, origem, destino, partida, capacidade, vagas, preço,
-distância e tempos. Não inclui e-mail do motorista nem lista de contas.
-A agregação devolve `trechos` e `empresas_indisponiveis` com HTTP 200 mesmo se
-uma parte das empresas estiver indisponível. Buscar não reserva vagas.
+As chamadas entre empresas usam somente API REST própria, implementada com a biblioteca padrão de Go. Os nomes internos `prepararRPC` e `resultadoRPC` são estruturas JSON, sem framework de RPC.
 
-### Identidade do processo
+## Relógio de Lamport
 
-Resposta de `/distribuido/saude`:
+Cada servidor mantém um contador lógico sob mutex. Um evento local ou envio incrementa `L`; uma recepção calcula `L = max(L, recebido) + 1`. Todas as chamadas e respostas de coordenação usam o cabeçalho obrigatório `X-Lamport`, inclusive as consultas de saúde e estado. Chamadas à própria empresa seguem as mesmas regras em memória. O contador é persistido antes dos envios e das respostas de sucesso e restaurado com o backup. Uma recepção de resposta também é persistida.
+
+Exemplo: VaiJunto envia com `L=8`; Minas estava em `L=20`, recebe e avança para `21`; ao responder avança para `22`; VaiJunto recebe e avança para `23`. Nenhum passo consulta a hora física. A transação registra sua marca inicial em `meta.lamport`; preparações registram a marca lógica local em `ordem_local`. A recuperação percorre operações por `(lamport, empresa_origem, transacao_id)`, usando os IDs como desempate determinístico.
+
+Lamport representa causalidade, não uma fila global de reservas: uma mensagem atrasada com número menor não desfaz uma preparação já aceita. A vaga continua protegida pelo dono, e a primeira preparação admitida sob trava vence a disputa local. O 2PC exige todos os donos para confirmar. Horários de partida continuam sendo instantes RFC3339; timeouts e intervalos de recuperação são durações locais, pois um contador lógico não detecta silêncio de rede.
+
+Para uma consulta manual de diagnóstico, envie também `-H 'X-Lamport: 1'`. Esse valor é apenas um evento de um cliente de diagnóstico, não o contador de outra empresa. As rotas de catálogo (`/trechos`, `/consorcio/trechos`) não executam coordenação 2PC e não exigem esse cabeçalho.
+
+## Catálogo
+
+`GET /trechos` devolve:
 
 ```json
-{"empresa_id":"empresa-a","geracao":"identificador-aleatorio-do-processo"}
+{
+  "empresa_id": "minas",
+  "trechos": [
+    {
+      "empresa_id": "minas",
+      "trecho_id": "T000001",
+      "carona_id": "C000001",
+      "origem": "A",
+      "destino": "B",
+      "data_hora": "2099-10-01T08:00:00-03:00",
+      "assentos_livres": 1,
+      "capacidade": 1,
+      "preco": 20,
+      "distancia_km": 10,
+      "tempo_viagem_min": 30,
+      "tempo_parada_min": 0
+    }
+  ]
+}
 ```
 
-### Preparação
+A consulta agregada devolve `trechos` e `empresas_indisponiveis`. Consulta somente `/trechos` dos pares, evitando chamadas recursivas. Uma falha não elimina as ofertas das empresas que responderam. A resposta de catálogo é limitada a 8 MiB. A disponibilidade consultada não reserva vagas; a preparação deve verificá-las novamente.
 
-Envelope de `/distribuido/preparar` (valores de hashes são ilustrativos):
+## Fase 1: preparação
+
+O corpo tem dois campos: `meta`, com a identificação da transação, e `pedido`, com os trechos do destinatário.
 
 ```json
 {
   "meta": {
+    "lamport": 8,
     "transacao_id": "identificador-global",
-    "empresa_origem": "empresa-a",
+    "empresa_origem": "vaijunto",
     "inicio_itinerario": "2099-10-01T08:00:00-03:00",
     "tipo": "RESERVAR",
-    "participantes": ["empresa-a", "empresa-b"],
-    "hashes": {"empresa-a":"hash-pedido-a", "empresa-b":"hash-pedido-b"},
-    "geracoes": {"empresa-a":"geracao-a", "empresa-b":"geracao-b", "empresa-c":"geracao-c"}
+    "participantes": ["minas", "vaijunto"],
+    "hashes": {"minas": "resumo-do-pedido", "vaijunto": "resumo-do-pedido"},
+    "geracoes": {"minas": "geracao-minas", "vaijunto": "geracao-vaijunto"}
   },
   "pedido": {
     "transacao_id": "identificador-global",
-    "empresa_origem": "empresa-a",
-    "passageiro_ref": "referencia-opaca",
+    "empresa_origem": "vaijunto",
     "inicio_itinerario": "2099-10-01T08:00:00-03:00",
-    "participantes": ["empresa-a", "empresa-b"],
-    "trechos_ids": ["T000002"]
+    "passageiro_ref": "referencia-autenticada",
+    "participantes": ["minas", "vaijunto"],
+    "trechos_ids": ["T000001"]
   }
 }
 ```
 
-O hash de cada empresa é SHA256 do JSON do `PedidoPreparacao` correspondente,
-codificado pelo protocolo Go. A empresa receptora confere seu hash, identidade
-da origem, participantes, início e geração. Antes de alterar vagas, valida todos
-os seus trechos e escolhe assentos não ocupados nem preparados.
-Somente após essa validação registra a preparação e devolve `{"recibo":"..."}`.
-Repetir o mesmo pedido não separa outra vaga. Reutilizar o ID com dados diferentes
-é recusado. Um pedido atrasado de uma transação já decidida não a reabre.
+Os resumos e as gerações são ilustrativos. O pedido real é construído pelo servidor e validado pelo dono. Uma resposta SIM contém `recibo`; a preparação é persistida antes de responder. Um conflito retorna erro e o coordenador decide ABORTAR. Uma transação já finalizada não é reaberta por preparação atrasada.
 
-### Cédulas, promessas e aceitação
+A geração é uma identidade aleatória do histórico local, preservada no backup. Não é relógio. Se perder o arquivo e iniciar vazio, o servidor não pode aplicar mensagens de uma geração antiga como se ainda possuísse os dados.
 
-As cédulas são pares `(numero, empresa_id)`, comparados nessa ordem. `numero` é
-um contador lógico local atualizado ao receber cédulas maiores. O identificador
-da empresa desempata contadores iguais; não são usados relógios físicos para
-ordenar as decisões.
+## Fase 2: decisão e aplicação
 
-`/prometer` recebe `meta` e `cedula`. Retorna:
+`POST /distribuido/finalizar` recebe `meta`, `valor` e `assinatura`. `valor` contém `estado` (CONFIRMAR ou ABORTAR), motivo opcional e os recibos das preparações. CONFIRMAR exige recibos de todos os donos. A assinatura HMAC vincula os metadados e o valor.
 
-- `promessa`: maior cédula prometida;
-- `aceita`: cédula do último valor aceito (número zero indica ausência);
-- `valor`: último valor aceito, quando existir;
-- `final`: certificado já conhecido, quando existir.
+O receptor verifica a identidade da operação, sua geração, a autenticação e a ausência de decisão conflitante. A confirmação converte assentos preparados em ocupados, sem novo desconto. O aborto devolve somente assentos separados por essa transação. A aplicação repetida retorna o estado existente, sem duplicar efeitos. A aplicação é salva antes da resposta HTTP.
 
-`/aceitar` recebe `meta`, `cedula` e `valor`. Um valor tem `estado` (`CONFIRMAR`
-ou `ABORTAR`), `motivo` opcional e mapa `recibos`. Confirmar exige os recibos de
-todos os donos dos trechos. O receptor não aceita uma cédula menor que a promessa
-nem dois valores diferentes na mesma cédula. A resposta inclui `voto` quando aceito.
-
-O proponente coleta uma maioria de promessas e adota o valor aceito da maior
-cédula nesse conjunto, caso exista. Depois solicita aceitação. Dois votos válidos
-das três testemunhas formam um certificado. A implementação usa consenso de
-valor único por transação; não delega essa função a bibliotecas ou serviços externos.
-
-### Aplicação da decisão
-
-`/finalizar` recebe `meta`, `cedula`, `valor` e `votos` (mapa empresa → assinatura).
-Valida pelo menos dois votos distintos e a geração da própria instância.
-
-- `CONFIRMAR`: move os assentos de preparados para ocupados, cria a reserva local
-  e marca a transação confirmada; não desconta vagas novamente.
-- `ABORTAR`: devolve uma preparação existente uma única vez. Mesmo sem preparação
-  local, a decisão registrada impede uma preparação atrasada.
-
-A resposta inclui `reserva` quando existe um segmento confirmado localmente.
-Aplicações repetidas retornam o mesmo resultado. O passageiro só recebe estado
-`ATIVA` depois de os donos de todos os trechos confirmarem a aplicação. Até lá,
-o resultado global é `PENDENTE` e pode ser acompanhado em Minhas reservas.
-
-## Sequência normal
+## Sequência da confirmação
 
 ```mermaid
 sequenceDiagram
     participant P as Passageiro
-    participant A as Empresa de origem
-    participant B as Donos dos trechos
-    participant T as Três testemunhas
-    P->>A: Confirmar itinerário
-    A->>B: POST /distribuido/preparar
-    B-->>A: Recibos de preparação
-    A->>T: POST /distribuido/prometer
-    T-->>A: Maioria de promessas e valores anteriores
-    A->>T: POST /distribuido/aceitar
-    T-->>A: Maioria de votos
-    A->>T: POST /distribuido/finalizar
-    T->>B: Aplicação local quando a testemunha é dona de trechos
-    B-->>A: Segmentos confirmados
-    A-->>P: Reserva completa ATIVA
+    participant C as Empresa de origem/coordenador
+    participant X as Dono de AB
+    participant Y as Dono de BC
+    P->>C: TCP: confirmar itinerário com chave
+    C->>C: Registrar operação no backup local
+    C->>X: POST /distribuido/preparar
+    X->>X: Separar assento sob trava e salvar
+    X-->>C: SIM + recibo
+    C->>Y: POST /distribuido/preparar
+    Y->>Y: Separar assento sob trava e salvar
+    Y-->>C: SIM + recibo
+    C->>C: Gravar CONFIRMAR antes de enviar
+    par Aplicar em X
+        C->>X: POST /distribuido/finalizar
+        X->>X: Ocupar assento e salvar
+        X-->>C: Reserva local
+    and Aplicar em Y
+        C->>Y: POST /distribuido/finalizar
+        Y->>Y: Ocupar assento e salvar
+        Y-->>C: Reserva local
+    end
+    C-->>P: Reserva ATIVA após todos os donos aplicarem
 ```
 
-## Concorrência, cancelamento e recuperação
+Se um dono recusar, o coordenador grava ABORTAR e transmite essa decisão, incluindo aos donos que já prepararam. Se a resposta não chegar a um dono, a entrega será repetida.
 
-O dono admite preparações sob suas travas locais. A primeira admitida que encontra
-a vaga recebe o assento; o contador `ordem` registra essa admissão. Essa regra não
-promete ordem de envio nem justiça global, pois mensagens podem sofrer atrasos.
-As empresas e os trechos são adquiridos em ordem consistente; conflitos remotos
-são recusados sem aguardar outros assentos. Isso evita ciclos de espera remotos.
+## Exclusão mútua, precedência e deadlock
 
-Cancelamentos de reservas distribuídas são transações separadas, com tipo
-`CANCELAR` e `transacao_original`. Cada dono verifica a reserva e o início do
-itinerário inteiro. Uma decisão certificada aplica a devolução nos segmentos e
-notifica a empresa de origem. Cancelar uma oferta primeiro cancela essas reservas;
-uma preparação ou nova reserva concorrente impede invalidar a oferta por fora do protocolo.
+Cada dono protege seus próprios trechos com mutexes adquiridos em ordem de ID. A escolha do assento e a marcação como preparado ocorrem na região protegida. Outra transação não pode usar assento ocupado ou preparado.
 
-Cada empresa executa recuperação periódica. Após um intervalo de suspeita, pode
-propor aborto de uma transação interrompida. Se a fase de promessas encontrar um
-valor já aceito, ele deve ser preservado; portanto, timeout não autoriza liberar
-vagas unilateralmente. Decisões certificadas são retransmitidas de forma idempotente.
-Uma operação inteiramente local usa o fluxo local e independe das testemunhas.
+O desempate sobre a última vaga é a primeira preparação admitida na seção crítica do dono. Não depende de horário de envio ou de relógio físico de outro servidor. Os participantes são preparados em ordem de identificador e um conflito é recusado sem esperar a vaga de outra transação. Isso evita espera circular de recursos, mas pode aumentar recusas e novas tentativas.
 
-Limites explícitos:
+## Falhas e recuperação
 
-- A recuperação funciona após uma pausa de comunicação ou após reinício com o backup atual da empresa.
-- Com uma testemunha indisponível, as outras duas podem decidir.
-- Sem maioria, transações distribuídas pendentes aguardam para preservar segurança;
-  operações locais continuam disponíveis.
-- O arquivo local inclui contas, ofertas, reservas, preparações e os registros de consenso dessa testemunha.
-- A promessa e o voto só recebem resposta positiva após salvar o backup. Com o arquivo íntegro, a instância restaura sua geração e retoma as transações.
-- Sem backup, uma instância tem geração nova e não vota em transações anteriores.
+| Falha | Comportamento |
+|---|---|
+| Dono indisponível antes da preparação | Não confirma a viagem que depende dele; outras operações continuam |
+| Recusa ou timeout durante a fase 1 | Coordenador registra ABORTAR; repete a liberação nos donos que responderem |
+| Coordenador cai sem decisão registrada | Participantes mantêm assentos preparados; quando o coordenador volta com seu backup, registra ABORTAR |
+| Coordenador cai após gravar CONFIRMAR | Ao voltar, reenvia CONFIRMAR; nunca troca por ABORTAR |
+| Participante cai depois de responder SIM | Restaura sua preparação e consulta o coordenador |
+| Resposta da fase 2 se perde | Reenvio idempotente da mesma decisão |
+| Backup não pode ser gravado | Não responde SIM nem transmite decisão final sem a gravação exigida |
 
-A perda do arquivo ou do disco e a restauração manual de cópias antigas estão fora dessa garantia. As sessões precisam de nova autenticação após o reinício.
+**Limitação do 2PC:** um participante preparado pode ficar bloqueado esperando o coordenador voltar. Ele nunca aborta sozinho por timeout. Outras empresas e recursos sem relação continuam operando; uma reserva inteiramente local usa seu fluxo local.
+
+`GET /distribuido/estado?id=ID` devolve `decisao` quando o coordenador possui resultado. Sem resultado, devolve objeto vazio; isso não autoriza o participante a liberar vagas. A consulta só devolve uma decisão depois de salvar o backup local. Um participante não assume o papel de coordenador para escolher outro resultado.
+
+A recuperação é consultada periodicamente. O coordenador observa registros sem decisão durante um intervalo de suspeita de 10 segundos, medido por tempo monotônico local a partir da primeira observação; datas físicas salvas no backup não determinam esse intervalo. Esse prazo não é uma garantia de conclusão. Uma chamada ativa da mesma reserva é aguardada antes da recuperação. A decisão persistida sempre prevalece. Relógios físicos corretos continuam necessários para regras de partida, cancelamento e expiração de sessão; a coordenação causal e a segurança do assento não comparam horários de cliques entre computadores.
+
+## Cancelamento distribuído
+
+O cancelamento também usa preparação e decisão 2PC, coordenadas pela empresa de origem da reserva. Um motorista em outra empresa encaminha a solicitação a ela. Os donos verificam se a reserva existe e se o itinerário ainda não começou. Somente uma decisão de cancelamento confirmada autoriza devolver as vagas. A origem registra o cancelamento e a notificação. Se o coordenador estiver indisponível, o cancelamento aguarda nova tentativa; não desfaz unilateralmente só um trecho.
 
 ## Códigos HTTP
 
 | Código | Significado |
 |---|---|
-| 200 | Consulta ou operação concluída (uma promessa pode informar cédula superior) |
+| 200 | Consulta ou operação processada; observar o conteúdo retornado |
+| 400 | Cabeçalho `X-Lamport` ausente ou inválido |
 | 401 | Token ausente ou incorreto |
-| 404 | Recurso de coordenação inexistente |
+| 404 | Recurso de coordenação desconhecido |
 | 405 | Método incompatível |
-| 409 | Pedido, estado, geração, metadados ou certificado incompatíveis |
-| 413 | Mensagem acima do limite |
+| 409 | Dados inválidos, conflito ou erro ao persistir a operação |
+| 413 | Mensagem excedeu o limite de 1 MiB |
 
-O chamador compara a promessa/cédula retornada; HTTP 200 não significa, sozinho,
-que uma proposta recebeu um voto. Falhas de rede são tratadas como resultado
-desconhecido e não como prova de que a operação não aconteceu.
+Falha de transporte significa resultado desconhecido, não prova de que o servidor não executou. Repetir a operação deve manter a chave e o conteúdo. A gravação de uma fotografia completa a cada escrita simplifica o projeto acadêmico e acrescenta custo de disco.
 
-## Executar e verificar
+## Verificação
 
-Use as três instâncias de `compose.consorcio.yaml`, com um token comum e um volume privado por empresa. Na execução em computadores distintos, configure `-pares` com
-os endereços reais e libere as portas REST escolhidas nos firewalls.
-
-Simulador a partir das três empresas:
-
-```powershell
-go run ./cmd/carga -servidores localhost:7001,localhost:7002,localhost:7003 -clientes 100 -vagas 5
-```
-
-O simulador cadastra passageiros em todas as empresas, publica três segmentos,
-gera buscas e reservas concorrentes, mede latências e compara os assentos locais
-com as transações globais. A checagem não exige consumir todas as vagas: tentativas
-concorrentes podem ser abortadas com segurança.
-
-### Portas livres durante a apresentação
-
-Sem Docker, `go run ./cmd/servidor -endereco :0` pede ao sistema uma porta TCP
-livre e a mantém reservada enquanto o servidor estiver executando. O terminal
-mostra a porta efetiva. Conecte os clientes com `-servidor localhost:PORTA`.
-`-rest :0` também funciona, mas os outros servidores precisam receber a URL
-com a porta real em `-pares`; não existe descoberta automática de endereços.
-
-No Docker, as portas internas 8080 e 8081 são isoladas por contêiner e podem
-ser iguais. As portas publicadas no computador podem ser alteradas com
-`VAIJUNTO_TCP_A`, `VAIJUNTO_TCP_B`, `VAIJUNTO_TCP_C`, `VAIJUNTO_REST_A`,
-`VAIJUNTO_REST_B` e `VAIJUNTO_REST_C`. Use zero para publicação automática:
-
-```powershell
-$env:VAIJUNTO_TCP_A = $env:VAIJUNTO_TCP_B = $env:VAIJUNTO_TCP_C = "0"
-$env:VAIJUNTO_REST_A = $env:VAIJUNTO_REST_B = $env:VAIJUNTO_REST_C = "0"
-docker compose -p apresentacao-arthur -f compose.consorcio.yaml up --build -d
-docker compose -p apresentacao-arthur -f compose.consorcio.yaml port empresa-a 8080
-```
-
-Configure o token antes de iniciar. O último comando mostra a porta publicada
-para o cliente da empresa A; troque o serviço por `empresa-b` ou `empresa-c`
-para as outras empresas. Para descobrir a porta REST, consulte 8081.
-Os endereços internos entre as empresas permanecem os mesmos. Cada grupo que
-execute Docker no mesmo computador deve usar um nome de projeto `-p` diferente.
-Portas iguais em computadores diferentes não entram em conflito entre si.
-
-```powershell
-go test ./...
-go vet ./...
-```
-
-Os testes de integração cobrem disputa entre três origens, repetição, cancelamento,
-falha de comunicação antes e depois da escolha de uma decisão, retorno do mesmo
-processo, ausência de maioria e recusa de votos de uma geração perdida.
+O README descreve a execução da aplicação e do simulador. Use `go test ./...`, `go vet ./...` e `go build ./...` para validar a versão. O protocolo foi substituído por 2PC, sem migração do histórico anterior; o backup local desta versão usa o formato v2 para recuperar preparações e decisões após uma queda.

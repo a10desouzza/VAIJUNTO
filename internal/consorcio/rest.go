@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Publica o catálogo local, consulta ofertas dos pares por REST e agrupa trechos por empresa dona.
 package consorcio
 
 import (
@@ -17,7 +19,6 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-// TrechoPublico omite dados pessoais e identifica explicitamente o dono.
 type TrechoPublico struct {
 	Capacidade  int     `json:"capacidade"`
 	EmpresaID   string  `json:"empresa_id"`
@@ -53,6 +54,7 @@ type API struct {
 }
 
 // NovaAPI configura identidade, token, pares e fonte local; rejeita configuracoes invalidas.
+// Recebe: identidade, token, pares, fonte local e timeout.
 func NovaAPI(id, token string, empresas []configuracao.Empresa, fonte Fonte, timeout time.Duration) (*API, error) {
 	if err := configuracao.ValidarEmpresaID(id); err != nil {
 		return nil, err
@@ -70,6 +72,7 @@ func NovaAPI(id, token string, empresas []configuracao.Empresa, fonte Fonte, tim
 }
 
 // local monta o catalogo publico com os trechos disponiveis da propria empresa, sem dados pessoais.
+// Recebe: estado da API a e sua fonte de trechos.
 func (a *API) local() Catalogo {
 	c := Catalogo{EmpresaID: a.id, Trechos: make([]TrechoPublico, 0)}
 	for _, t := range a.fonte.TrechosDisponiveis() {
@@ -79,6 +82,7 @@ func (a *API) local() Catalogo {
 }
 
 // consultar consulta o catalogo REST do par recebido, validando limite da resposta e identidade da empresa.
+// Recebe: contexto e empresa de destino.
 func (a *API) consultar(ctx context.Context, empresa configuracao.Empresa) (Catalogo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, empresa.URL+"/trechos", nil)
 	if err != nil {
@@ -118,8 +122,8 @@ func (a *API) consultar(ctx context.Context, empresa configuracao.Empresa) (Cata
 	return c, nil
 }
 
-// ConsultarTodos consulta somente /trechos dos pares, evitando chamadas recursivas.
-// Uma empresa indisponivel nao impede o retorno das ofertas das demais.
+// ConsultarTodos consulta somente /trechos dos pares, evitando chamadas recursivas. Uma empresa indisponivel nao impede o retorno das ofertas das demais.
+// Recebe: contexto e estado da API a.
 func (a *API) ConsultarTodos(ctx context.Context) Consulta {
 	resultado := Consulta{Trechos: a.local().Trechos, Indisponiveis: make([]string, 0)}
 	var wg sync.WaitGroup
@@ -151,12 +155,14 @@ func (a *API) ConsultarTodos(ctx context.Context) Consulta {
 }
 
 // responder define o tipo JSON e escreve a representacao do valor na resposta HTTP.
+// Recebe: escritor HTTP e valor a serializar.
 func responder(w http.ResponseWriter, valor any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(valor)
 }
 
 // Handler constroi o atendimento HTTP dos recursos de consulta com autenticacao pelo token do consorcio.
+// Recebe: estado da API ou do componente distribuído receptor.
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /saude", func(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +185,7 @@ func (a *API) Handler() http.Handler {
 }
 
 // AgruparTrechos separa as referencias por dono sem alterar a ordem do pedido.
+// Recebe: chave e referências da reserva distribuída.
 func AgruparTrechos(pedido protocolo.ReservaDistribuida) (map[string][]string, error) {
 	if strings.TrimSpace(pedido.Chave) == "" || len(pedido.Chave) > 100 {
 		return nil, fmt.Errorf("chave de reserva ausente")

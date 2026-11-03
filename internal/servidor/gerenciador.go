@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Mantém o estado local, as contas, as sessões, as travas dos trechos e a proteção das senhas.
 package servidor
 
 import (
@@ -34,14 +36,11 @@ type oferta struct {
 	ids       []string
 }
 
-// Guarda os dados comparaveis e o ID gerado para reconhecer uma operacao repetida.
 type repeticao struct {
 	assinatura string
 	id         string
 }
 
-// estadoTrecho agrupa a trava de confirmacao e a ocupacao de uma aresta.
-// Escritas tambem usam g.mu, permitindo consultas consistentes sob g.mu.RLock.
 type estadoTrecho struct {
 	mu         sync.Mutex
 	trecho     protocolo.Trecho
@@ -49,9 +48,6 @@ type estadoTrecho struct {
 	preparados map[int]string
 }
 
-// Ordem de travas: manutencao, trechos ordenados, mu. Nunca aguardar um
-// trecho mantendo mu. Cancelamentos usam manutencao exclusiva e mu;
-// confirmacoes usam manutencao compartilhada e travas dos trechos.
 type GrafoItinerarios struct {
 	logger       *log.Logger
 	agora        func() time.Time
@@ -72,6 +68,7 @@ type GrafoItinerarios struct {
 }
 
 // NovoGrafo inicializa os mapas e o relogio. Retorna um servidor sem dados cadastrados.
+// Recebe: nenhum argumento.
 func NovoGrafo() *GrafoItinerarios {
 	return &GrafoItinerarios{
 		logger:       log.Default(),
@@ -89,12 +86,14 @@ func NovoGrafo() *GrafoItinerarios {
 }
 
 // novoID gera um ID com prefixo e contador. Exige que quem chamou mantenha a trava de escrita.
+// Recebe: prefixo do recurso; exige g.mu de escrita adquirido.
 func (g *GrafoItinerarios) novoID(prefixo string) string {
 	g.sequencia++
 	return fmt.Sprintf("%s%06d", prefixo, g.sequencia)
 }
 
 // Cadastrar armazena apenas PBKDF2-SHA256 com salt aleatorio por conta.
+// Recebe: dados da nova conta e estado local g.
 func (g *GrafoItinerarios) Cadastrar(c protocolo.Cadastro) (protocolo.Usuario, error) {
 	c.Email = strings.ToLower(strings.TrimSpace(c.Email))
 	c.Nome = strings.TrimSpace(c.Nome)
@@ -121,6 +120,7 @@ func (g *GrafoItinerarios) Cadastrar(c protocolo.Cadastro) (protocolo.Usuario, e
 }
 
 // Autenticar confere as credenciais e retorna uma sessao aleatoria com validade de 15 minutos.
+// Recebe: e-mail, senha e estado local g.
 func (g *GrafoItinerarios) Autenticar(c protocolo.Credenciais) (protocolo.Sessao, error) {
 	email := strings.ToLower(strings.TrimSpace(c.Email))
 	if len(c.Senha) > 128 {
@@ -147,8 +147,8 @@ func (g *GrafoItinerarios) Autenticar(c protocolo.Credenciais) (protocolo.Sessao
 	return protocolo.Sessao{ID: sessaoID, ExpiraEm: expira.Format(time.RFC3339), Usuario: usuario.usuario}, nil
 }
 
-// autorizar confere sessao, validade e perfil. IMPORTANTE: quem chama ja deve manter Lock ou
-// RLock.
+// autorizar confere sessao, validade e perfil. IMPORTANTE: quem chama ja deve manter Lock ou RLock.
+// Recebe: ID da sessão e perfil exigido; exige proteção do estado.
 func (g *GrafoItinerarios) autorizar(sessaoID, perfil string) (protocolo.Usuario, error) {
 	s, ok := g.sessoes[sessaoID]
 	if !ok || !s.expira.After(g.agora()) {
@@ -162,6 +162,7 @@ func (g *GrafoItinerarios) autorizar(sessaoID, perfil string) (protocolo.Usuario
 }
 
 // Desconectar remove a sessao. Nao apaga a conta nem cancela suas reservas.
+// Recebe: ID da sessão e estado local g.
 func (g *GrafoItinerarios) Desconectar(sessaoID string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -174,6 +175,7 @@ func (g *GrafoItinerarios) Desconectar(sessaoID string) error {
 }
 
 // expirarSessoes exige trava exclusiva e registra cada expiracao uma unica vez.
+// Recebe: instante atual; exige g.mu de escrita adquirido.
 func (g *GrafoItinerarios) expirarSessoes(agora time.Time) {
 	for id, s := range g.sessoes {
 		if !s.expira.After(agora) {
@@ -184,13 +186,15 @@ func (g *GrafoItinerarios) expirarSessoes(agora time.Time) {
 }
 
 // limparSessoesExpiradas adquire a trava do estado e remove sessoes vencidas usando o horario atual.
+// Recebe: estado local g, sem argumentos explícitos.
 func (g *GrafoItinerarios) limparSessoesExpiradas() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.expirarSessoes(g.agora())
 }
 
-// Os ponteiros publicados permanecem estaveis; cancelamentos alteram seu status.
+// localizarTrechos Os ponteiros publicados permanecem estaveis; cancelamentos alteram seu status.
+// Recebe: IDs dos trechos locais.
 func (g *GrafoItinerarios) localizarTrechos(ids []string) (map[string]*estadoTrecho, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -208,7 +212,8 @@ func (g *GrafoItinerarios) localizarTrechos(ids []string) (map[string]*estadoTre
 	return estados, nil
 }
 
-// Nunca aguardar travas de trechos mantendo g.mu. IDs ordenados evitam ciclos.
+// travarTrechos Nunca aguardar travas de trechos mantendo g.mu. IDs ordenados evitam ciclos.
+// Recebe: mapa dos estados dos trechos.
 func travarTrechos(estados map[string]*estadoTrecho) func() {
 	ids := make([]string, 0, len(estados))
 	for id := range estados {
@@ -225,9 +230,10 @@ func travarTrechos(estados map[string]*estadoTrecho) func() {
 	}
 }
 
-// O formato inclui algoritmo, custo, salt e hash. Nunca guarda a senha original.
 const custoSenha = 600000
 
+// protegerSenha deriva a senha com PBKDF2-SHA256, salt aleatório e comparação posterior sem guardar texto puro.
+// Recebe: senha em texto recebida na autenticação/cadastro.
 func protegerSenha(senha string) (string, error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
@@ -239,6 +245,9 @@ func protegerSenha(senha string) (string, error) {
 	}
 	return "pbkdf2-sha256$600000$" + hex.EncodeToString(salt) + "$" + hex.EncodeToString(hash), nil
 }
+
+// decodificarSenha valida o formato armazenado e extrai os componentes da senha protegida.
+// Recebe: representação PBKDF2 armazenada.
 func decodificarSenha(valor string) ([]byte, []byte, error) {
 	partes := strings.Split(valor, "$")
 	if len(partes) != 4 || partes[0] != "pbkdf2-sha256" || partes[1] != "600000" {
@@ -254,6 +263,9 @@ func decodificarSenha(valor string) ([]byte, []byte, error) {
 	}
 	return salt, hash, nil
 }
+
+// conferirSenha deriva a senha informada e compara o hash em tempo constante para tamanhos iguais.
+// Recebe: senha informada e representação armazenada.
 func conferirSenha(senha, armazenada string) bool {
 	salt, esperado, err := decodificarSenha(armazenada)
 	if err != nil {

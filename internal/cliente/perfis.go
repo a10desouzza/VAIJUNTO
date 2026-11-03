@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Implementa os formulários e as operações dos menus de motorista e passageiro.
 package cliente
 
 import (
@@ -11,6 +13,7 @@ import (
 )
 
 // publicar monta rota e trechos, mostra o resumo e envia apos a confirmacao do motorista.
+// Recebe: entrada e sessão do motorista em m.
 func (m *menu) publicar() error {
 	m.cabecalho("Publicar carona", "")
 	n := m.numero("Quantidade de cidades da rota", 2, 21)
@@ -32,7 +35,6 @@ func (m *menu) publicar() error {
 	for i := 0; i < n-1 && m.err == nil; i++ {
 		fmt.Fprintf(m.saida, "\nTrecho %d: %s -> %s\n", i+1, p.Rota[i], p.Rota[i+1])
 		distancia := m.decimal("Distância deste trecho em km", 0.01, 100000)
-
 		trecho := protocolo.OfertaTrecho{DistanciaKM: distancia, Preco: m.preco(), TempoViagem: m.numero("Tempo de viagem em minutos", 1, 10080)}
 		if i < n-2 {
 			trecho.TempoParada = m.numero("Parada após este trecho em minutos", 0, 10080)
@@ -68,6 +70,7 @@ func (m *menu) publicar() error {
 }
 
 // caronas consulta e mostra vagas e passageiros por trecho. Retorna a lista para selecao.
+// Recebe: sessão do motorista e menu m.
 func (m *menu) caronas() ([]protocolo.Carona, error) {
 	m.cabecalho("Minhas caronas", "")
 	var caronas []protocolo.Carona
@@ -91,6 +94,7 @@ func (m *menu) caronas() ([]protocolo.Carona, error) {
 }
 
 // cancelarCarona seleciona uma oferta e pede confirmacao antes de solicitar o cancelamento.
+// Recebe: entrada e sessão do motorista em m.
 func (m *menu) cancelarCarona() error {
 	caronas, err := m.caronas()
 	if err != nil || len(caronas) == 0 {
@@ -117,6 +121,7 @@ func (m *menu) cancelarCarona() error {
 }
 
 // cancelarTrecho consulta caronas, seleciona um trecho e confirma a solicitacao de cancelamento.
+// Recebe: entrada e sessão do motorista em m.
 func (m *menu) cancelarTrecho() error {
 	caronas, err := m.caronas()
 	if err != nil || len(caronas) == 0 {
@@ -148,6 +153,7 @@ func (m *menu) cancelarTrecho() error {
 }
 
 // buscar consulta itinerarios e permite reservar uma opcao enviando os IDs na ordem do percurso.
+// Recebe: entrada e sessão do passageiro em m.
 func (m *menu) buscar() error {
 	m.cabecalho("Buscar itinerário", "")
 	b := protocolo.BuscaItinerario{Origem: m.cidade("Origem", nil)}
@@ -190,7 +196,7 @@ func (m *menu) buscar() error {
 	if err != nil {
 		return err
 	}
-	// envia a chave e os IDs dos trechos na ordem do percurso para confirmar a reserva
+
 	p := protocolo.ReservaItinerario{Chave: chave, TrechosIDs: make([]string, 0, len(it.Trechos))}
 	for _, t := range it.Trechos {
 		if t.EmpresaID != "" {
@@ -200,7 +206,6 @@ func (m *menu) buscar() error {
 		}
 	}
 	var reserva protocolo.Reserva
-
 	if err := m.enviar(protocolo.AcaoConfirmar, p, &reserva); err != nil {
 		return err
 	}
@@ -214,6 +219,7 @@ func (m *menu) buscar() error {
 }
 
 // mostrarReserva mostra status, valor e percurso. Nao apresenta uma escolha de assento numerado.
+// Recebe: reserva e saída do menu m.
 func (m *menu) mostrarReserva(r protocolo.Reserva) {
 	fmt.Fprintf(m.saida, "  %s | %s | %s\n", r.ID, r.Status, dinheiro(r.PrecoTotal))
 	for _, a := range r.Assentos {
@@ -230,8 +236,8 @@ func (m *menu) mostrarReserva(r protocolo.Reserva) {
 	}
 }
 
-// reservas consulta e apresenta as reservas do passageiro. Retorna a lista para as outras
-// operacoes.
+// reservas consulta e apresenta as reservas do passageiro. Retorna a lista para as outras operacoes.
+// Recebe: sessão do passageiro e menu m.
 func (m *menu) reservas() ([]protocolo.Reserva, error) {
 	m.cabecalho("Minhas reservas", "")
 	var reservas []protocolo.Reserva
@@ -249,6 +255,7 @@ func (m *menu) reservas() ([]protocolo.Reserva, error) {
 }
 
 // cancelarReserva seleciona a reserva e confirma o cancelamento de todos os seus trechos.
+// Recebe: entrada e sessão do passageiro em m.
 func (m *menu) cancelarReserva() error {
 	reservas, err := m.reservas()
 	if err != nil || len(reservas) == 0 {
@@ -273,8 +280,8 @@ func (m *menu) cancelarReserva() error {
 	return nil
 }
 
-// entrar autentica e guarda a sessao localmente. Recusa uma conta de perfil diferente do cliente
-// aberto.
+// entrar autentica e guarda a sessao localmente. Recusa uma conta de perfil diferente do cliente aberto.
+// Recebe: credenciais lidas no menu m.
 func (m *menu) entrar() error {
 	m.cabecalho("Login", "")
 	p := protocolo.Credenciais{Email: m.email(), Senha: m.campo("Senha (visível no terminal)", nil, protocolo.ValidarSenha)}

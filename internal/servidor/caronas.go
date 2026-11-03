@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Publica e consulta ofertas, verifica conexões e busca caminhos com horários e vagas compatíveis.
 package servidor
 
 import (
@@ -13,21 +15,25 @@ import (
 )
 
 // cidade remove espacos excedentes do nome sem retirar acentos.
+// Recebe: nome de cidade.
 func cidade(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
 // chaveCidade gera a chave de comparacao em minusculas.
+// Recebe: nome de cidade.
 func chaveCidade(s string) string {
 	return strings.ToLower(cidade(s))
 }
 
 // centavos arredonda um valor em reais para centavos inteiros.
+// Recebe: valor em reais.
 func centavos(p float64) int64 {
 	return int64(math.Round(p * 100))
 }
 
 // validarChave confere preenchimento e tamanho da chave usada para identificar repeticoes.
+// Recebe: chave da solicitação.
 func validarChave(s string) error {
 	if len(strings.TrimSpace(s)) < 1 || len(s) > 100 {
 		return fmt.Errorf("chave deve ter de 1 a 100 bytes")
@@ -36,12 +42,14 @@ func validarChave(s string) error {
 }
 
 // assinatura serializa os dados para comparar repeticoes. Nao e uma assinatura criptografica.
+// Recebe: dados serializáveis.
 func assinatura(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
 
 // Publicar valida a oferta e cria a carona e seus trechos. Retorna a carona publicada ou erro.
+// Recebe: sessão do motorista e dados da oferta.
 func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCarona) (protocolo.Carona, error) {
 	if err := validarChave(p.Chave); err != nil {
 		return protocolo.Carona{}, err
@@ -49,7 +57,7 @@ func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCaron
 	if len(p.Rota) < 2 || len(p.Rota) > 21 || len(p.Trechos) != len(p.Rota)-1 || p.Assentos < 1 || p.Assentos > 100 {
 		return protocolo.Carona{}, fmt.Errorf("informe de 2 a 21 cidades, uma oferta por trecho e de 1 a 100 assentos")
 	}
-	/* Copiamos as listas recebidas para nao guardar vetores que o chamador possa alterar. */
+
 	p.Rota = append([]string(nil), p.Rota...)
 	p.Trechos = append([]protocolo.OfertaTrecho(nil), p.Trechos...)
 	cidades := make(map[string]bool)
@@ -74,8 +82,7 @@ func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCaron
 			return protocolo.Carona{}, fmt.Errorf("distância deve ser positiva, até 100000 km e duas casas decimais; preço entre 0 e 1000000 com até duas casas decimais; viagem de 1 a 10080 e parada de 0 a 10080 minutos")
 		}
 	}
-	// O destino final encerra a carona. Normalizamos antes da assinatura para
-	// aceitar clientes antigos sem criar espera artificial nem alterar a entrada do chamador.
+
 	p.Trechos[len(p.Trechos)-1].TempoParada = 0
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -102,7 +109,7 @@ func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCaron
 		t := protocolo.Trecho{ID: tid, CaronaID: id, Origem: p.Rota[i], Destino: p.Rota[i+1], DataHora: horario.Format(time.RFC3339), Assentos: p.Assentos, Capacidade: p.Assentos, Preco: float64(centavos(ofertaTrecho.Preco)) / 100, TempoViagem: ofertaTrecho.TempoViagem, TempoParada: ofertaTrecho.TempoParada, Motorista: u.Email, DistanciaKM: ofertaTrecho.DistanciaKM, Status: protocolo.Ativa}
 		g.trechos[tid] = &estadoTrecho{trecho: t, ocupados: make(map[int]string), preparados: make(map[int]string)}
 		origem := chaveCidade(t.Origem)
-		/* Append preserva ofertas paralelas: publicar a mesma rota nao substitui a anterior. */
+
 		g.rotas[origem] = append(g.rotas[origem], tid)
 
 		o.ids = append(o.ids, tid)
@@ -113,8 +120,8 @@ func (g *GrafoItinerarios) Publicar(sessaoID string, p protocolo.PublicacaoCaron
 	return g.consultarCarona(id), nil
 }
 
-// consultarCarona monta a resposta com vagas e passageiros atuais. Exige trava de leitura ou
-// escrita.
+// consultarCarona monta a resposta com vagas e passageiros atuais. Exige trava de leitura ou escrita.
+// Recebe: ID da carona; exige proteção do estado local.
 func (g *GrafoItinerarios) consultarCarona(id string) protocolo.Carona {
 	o := g.caronas[id]
 	c := protocolo.Carona{ID: id, Motorista: o.motorista, Rota: append([]string(nil), o.entrada.Rota...), DataHora: o.entrada.DataHora, Status: o.status, Trechos: make([]protocolo.TrechoConsultado, 0, len(o.ids))}
@@ -137,6 +144,7 @@ func (g *GrafoItinerarios) consultarCarona(id string) protocolo.Carona {
 }
 
 // ConsultarCaronas retorna apenas as ofertas do motorista autenticado, ordenadas por ID.
+// Recebe: sessão do motorista.
 func (g *GrafoItinerarios) ConsultarCaronas(sessaoID string) ([]protocolo.Carona, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -157,23 +165,26 @@ func (g *GrafoItinerarios) ConsultarCaronas(sessaoID string) ([]protocolo.Carona
 }
 
 // partida converte o horario RFC3339 do trecho, validado na publicacao.
+// Recebe: descrição de um trecho.
 func partida(t protocolo.Trecho) time.Time {
 	h, _ := time.Parse(time.RFC3339, t.DataHora)
 	return h
 }
 
 // chegada soma o tempo de viagem a partida, sem incluir a parada posterior.
+// Recebe: descrição de um trecho.
 func chegada(t protocolo.Trecho) time.Time {
 	return partida(t).Add(time.Duration(t.TempoViagem) * time.Minute)
 }
 
 // conectam confere cidade e horario da conexao, considerando a parada do trecho anterior.
+// Recebe: trecho anterior a e seguinte b.
 func conectam(a, b protocolo.Trecho) bool {
 	return chaveCidade(a.Destino) == chaveCidade(b.Origem) && !partida(b).Before(chegada(a).Add(time.Duration(a.TempoParada)*time.Minute))
 }
 
-// Buscar recebe origem, destino, data; ordena por partida. Explora caminhos por DFS e retorna
-// opcoes viaveis.
+// Buscar recebe origem, destino, data; ordena por partida. Explora caminhos por DFS e retorna opcoes viaveis.
+// Recebe: sessão do passageiro e critérios de busca.
 func (g *GrafoItinerarios) Buscar(sessaoID string, b protocolo.BuscaItinerario) (protocolo.ResultadoBusca, error) {
 	if chaveCidade(b.Origem) == "" || chaveCidade(b.Destino) == "" || chaveCidade(b.Origem) == chaveCidade(b.Destino) {
 		return protocolo.ResultadoBusca{}, fmt.Errorf("origem e destino devem ser distintos e não vazios")
@@ -192,8 +203,7 @@ func (g *GrafoItinerarios) Buscar(sessaoID string, b protocolo.BuscaItinerario) 
 		g.mu.RUnlock()
 		return protocolo.ResultadoBusca{}, err
 	}
-	/* Copia de consulta: o DFS trabalha fora da trava. As vagas podem mudar depois,
-	 * por isso Confirmar precisa verificar a disponibilidade novamente. */
+
 	rotas := make(map[string][]protocolo.Trecho)
 	agora := g.agora()
 	for origem, ids := range g.rotas {
@@ -209,6 +219,7 @@ func (g *GrafoItinerarios) Buscar(sessaoID string, b protocolo.BuscaItinerario) 
 }
 
 // buscarRotas explora somente a copia temporaria das ofertas.
+// Recebe: critérios e listas de saída por cidade.
 func buscarRotas(b protocolo.BuscaItinerario, rotas map[string][]protocolo.Trecho) protocolo.ResultadoBusca {
 	resultado := protocolo.ResultadoBusca{Itinerarios: make([]protocolo.Itinerario, 0), MaxTrechos: b.MaxTrechos}
 	visitadas := map[string]bool{chaveCidade(b.Origem): true}
@@ -216,7 +227,7 @@ func buscarRotas(b protocolo.BuscaItinerario, rotas map[string][]protocolo.Trech
 	var explorar func(string, []protocolo.Trecho, int64)
 	explorar = func(origem string, caminho []protocolo.Trecho, preco int64) {
 		for _, t := range rotas[origem] {
-			/* Limites evitam explorar indefinidamente um grafo com muitas combinacoes. */
+
 			if passos >= 50000 || len(resultado.Itinerarios) >= 100 {
 				resultado.Limitada = true
 				return
@@ -247,12 +258,12 @@ func buscarRotas(b protocolo.BuscaItinerario, rotas map[string][]protocolo.Trech
 			}
 			visitadas[destino] = true
 			explorar(destino, novo, total)
-			/* Backtracking: libera a cidade para outros caminhos, sem permitir ciclo no caminho atual. */
+
 			delete(visitadas, destino)
 		}
 	}
 	explorar(chaveCidade(b.Origem), nil, 0)
-	/* Ordena o conjunto encontrado. Se a busca foi limitada, outras opcoes podem existir. */
+
 	sort.Slice(resultado.Itinerarios, func(i, j int) bool {
 		a, c := resultado.Itinerarios[i], resultado.Itinerarios[j]
 		if !partida(a.Trechos[0]).Equal(partida(c.Trechos[0])) {
@@ -277,8 +288,8 @@ func buscarRotas(b protocolo.BuscaItinerario, rotas map[string][]protocolo.Trech
 	return resultado
 }
 
-// TrechosDisponiveis exporta uma copia apenas das ofertas locais; nunca contas,
-// sessoes ou reservas. O transporte remove tambem a identidade do motorista.
+// TrechosDisponiveis exporta uma copia apenas das ofertas locais; nunca contas, sessoes ou reservas. O transporte remove tambem a identidade do motorista.
+// Recebe: estado local g, sem argumentos explícitos.
 func (g *GrafoItinerarios) TrechosDisponiveis() []protocolo.Trecho {
 	g.mu.RLock()
 	defer g.mu.RUnlock()

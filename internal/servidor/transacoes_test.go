@@ -1,8 +1,11 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Testa preparação e aborto de assentos, conexões temporais e 2PC com relógios físicos distintos.
 package servidor
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +13,40 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
+// TestLamport2PCComRelogiosFisicosDiferentes verifica propagação causal REST e reserva 2PC com relógios físicos distintos.
+// Recebe: controle de teste t.
+func TestLamport2PCComRelogiosFisicosDiferentes(t *testing.T) {
+	es := criarConsorcio(t, 1)
+	agora := time.Now()
+	for i, e := range es {
+		desvio := time.Duration(i*48-24) * time.Hour
+		e.g.agora = func() time.Time { return agora.Add(desvio) }
+	}
+	a, b := es[0].d, es[1].d
+	a.evento(2000)
+	b.evento(1000)
+	var saude saudeEmpresa
+	if err := a.chamar(context.Background(), b.id, "saude", nil, &saude); err != nil {
+		t.Fatal(err)
+	}
+	if a.relogio <= b.relogio || b.relogio <= 2000 {
+		t.Fatal("ida e volta REST nao propagaram a causalidade")
+	}
+	r, err := a.reservar(es[0].passageiro, pedidoTeste(es, "lamport"))
+	if err != nil || r.Status != protocolo.Ativa {
+		t.Fatalf("2PC com horarios diferentes: %+v %v", r, err)
+	}
+	marca := a.registros[r.TransacaoID].Meta.Lamport
+	for _, e := range es {
+		if marca == 0 || e.g.transacoes[r.TransacaoID].ordem <= marca {
+			t.Fatal("preparacao nao sucedeu a criacao logica da transacao")
+		}
+	}
+	verificarVagas(t, es, 0, 1, 0)
+}
+
+// TestPublicacaoSemParadaNoDestinoFinal verifica a regra de parada apenas nas conexões, não após o destino final.
+// Recebe: controle de teste t.
 func TestPublicacaoSemParadaNoDestinoFinal(t *testing.T) {
 	c := criarCenario(t)
 	for _, n := range []int{2, 3, 8, 21} {
@@ -50,6 +87,8 @@ func TestPublicacaoSemParadaNoDestinoFinal(t *testing.T) {
 	}
 }
 
+// TestReservaSerrinhaFeiraSalvadorDuranteViagemEParada verifica horários e cancelamentos durante a viagem e a parada entre conexões.
+// Recebe: controle de teste t.
 func TestReservaSerrinhaFeiraSalvadorDuranteViagemEParada(t *testing.T) {
 	for _, caso := range []struct {
 		nome      string
@@ -107,6 +146,8 @@ func TestReservaSerrinhaFeiraSalvadorDuranteViagemEParada(t *testing.T) {
 	}
 }
 
+// TestPreparacaoEAbortoPreservamVagas verifica separação e liberação dos assentos sem duplicar os efeitos.
+// Recebe: controle de teste t.
 func TestPreparacaoEAbortoPreservamVagas(t *testing.T) {
 	c := criarCenario(t)
 	id := c.ab.Trechos[0].Trecho.ID
@@ -154,6 +195,8 @@ func TestPreparacaoEAbortoPreservamVagas(t *testing.T) {
 	}
 }
 
+// TestPreparacaoRecusadaNaoSeparaParteDoPedido verifica que uma preparação recusada não deixa uma alocação local parcial.
+// Recebe: controle de teste t.
 func TestPreparacaoRecusadaNaoSeparaParteDoPedido(t *testing.T) {
 	c := criarCenario(t)
 	ab, bc := c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID
@@ -169,6 +212,8 @@ func TestPreparacaoRecusadaNaoSeparaParteDoPedido(t *testing.T) {
 	}
 }
 
+// TestChaveConcorrenteEmTrechosDiferentesNaoOcupaDuasVagas verifica que a mesma chave concorrente não cria duas reservas distintas.
+// Recebe: controle de teste t.
 func TestChaveConcorrenteEmTrechosDiferentesNaoOcupaDuasVagas(t *testing.T) {
 	c := criarCenario(t)
 	ids := []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID}
@@ -205,6 +250,8 @@ func TestChaveConcorrenteEmTrechosDiferentesNaoOcupaDuasVagas(t *testing.T) {
 	}
 }
 
+// TestReservaEmOutroTrechoNaoEsperaTravaDoPrimeiro verifica que um trecho independente não precisa aguardar a trava de outro.
+// Recebe: controle de teste t.
 func TestReservaEmOutroTrechoNaoEsperaTravaDoPrimeiro(t *testing.T) {
 	c := criarCenario(t)
 	ab := c.ab.Trechos[0].Trecho.ID

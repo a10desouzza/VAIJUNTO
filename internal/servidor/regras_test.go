@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Prepara cenários locais e testa autenticação, autorização, preços, sessões e validação JSON.
 package servidor
 
 import (
@@ -23,6 +25,8 @@ type cenarioViagem struct {
 	bc    protocolo.Carona
 }
 
+// criarCenario prepara usuários e ofertas conectadas com horário controlado para os testes locais.
+// Recebe: controle de teste t.
 func criarCenario(t *testing.T) *cenarioViagem {
 	t.Helper()
 	c := &cenarioViagem{g: NovoGrafo(), agora: time.Date(2099, 10, 1, 8, 0, 0, 0, time.FixedZone("Bahia", -3*3600))}
@@ -61,6 +65,8 @@ func criarCenario(t *testing.T) *cenarioViagem {
 	return c
 }
 
+// reservar confirma a reserva usada pelo cenário de teste.
+// Recebe: cenário c e controle t.
 func (c *cenarioViagem) reservar(t *testing.T) protocolo.Reserva {
 	t.Helper()
 	r, err := c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "abc", TrechosIDs: []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID}})
@@ -70,6 +76,8 @@ func (c *cenarioViagem) reservar(t *testing.T) protocolo.Reserva {
 	return r
 }
 
+// reautenticar renova as sessões do cenário após mudanças no horário controlado.
+// Recebe: cenário c e controle t.
 func (c *cenarioViagem) reautenticar(t *testing.T) {
 	t.Helper()
 	for email, destino := range map[string]*string{"m1@teste.com": &c.m1, "m2@teste.com": &c.m2, "p@teste.com": &c.p, "outro@teste.com": &c.outro} {
@@ -81,6 +89,8 @@ func (c *cenarioViagem) reautenticar(t *testing.T) {
 	}
 }
 
+// cancelarConexao tenta cancelar a conexão por trecho ou carona no cenário local.
+// Recebe: tipo de cancelamento e cenário c.
 func (c *cenarioViagem) cancelarConexao(tipo string) error {
 	if tipo == "trecho" {
 		_, err := c.g.CancelarTrecho(c.m2, c.bc.Trechos[0].Trecho.ID)
@@ -90,6 +100,8 @@ func (c *cenarioViagem) cancelarConexao(tipo string) error {
 	return err
 }
 
+// TestCadastroAutenticacaoAutorizacaoEDesconexao verifica contas, credenciais, restrições de perfil e encerramento de sessão.
+// Recebe: controle de teste t.
 func TestCadastroAutenticacaoAutorizacaoEDesconexao(t *testing.T) {
 	g := NovoGrafo()
 	g.agora = func() time.Time {
@@ -143,6 +155,8 @@ func TestCadastroAutenticacaoAutorizacaoEDesconexao(t *testing.T) {
 	}
 }
 
+// TestPrecoPorTrechoValidacaoESoma verifica validação dos preços e soma monetária por trecho.
+// Recebe: controle de teste t.
 func TestPrecoPorTrechoValidacaoESoma(t *testing.T) {
 	c := criarCenario(t)
 	p := protocolo.PublicacaoCarona{Chave: "precos", Rota: []string{"Serrinha", "Feira", "Salvador"}, DataHora: c.agora.Add(time.Hour).Format(time.RFC3339), Assentos: 2, Trechos: []protocolo.OfertaTrecho{{Preco: 0.10, DistanciaKM: 999, TempoViagem: 60}, {Preco: 0.20, DistanciaKM: 1, TempoViagem: 60}}}
@@ -168,6 +182,8 @@ func TestPrecoPorTrechoValidacaoESoma(t *testing.T) {
 	}
 }
 
+// TestSessaoQuinzeMinutosELogsSemSegredos verifica expiração da sessão e ausência de credenciais nos registros de log.
+// Recebe: controle de teste t.
 func TestSessaoQuinzeMinutosELogsSemSegredos(t *testing.T) {
 	c := criarCenario(t)
 	var saida bytes.Buffer
@@ -214,6 +230,8 @@ func TestSessaoQuinzeMinutosELogsSemSegredos(t *testing.T) {
 	}
 }
 
+// TestDecodificarRejeitaJSONAmbiguoOuForaDoContrato verifica rejeição de JSON ambíguo, campos desconhecidos e formatos inválidos.
+// Recebe: controle de teste t.
 func TestDecodificarRejeitaJSONAmbiguoOuForaDoContrato(t *testing.T) {
 	casos := map[string][]byte{
 		"vazio":              nil,

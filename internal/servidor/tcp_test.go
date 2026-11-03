@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Testa comunicação TCP, limites de mensagens, clientes ociosos e cancelamentos concorrentes.
 package servidor
 
 import (
@@ -17,6 +19,8 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
+// TestCancelamentoAntesDaPartidaENotificacoes verifica restrições temporais de cancelamento e avisos ao passageiro.
+// Recebe: controle de teste t.
 func TestCancelamentoAntesDaPartidaENotificacoes(t *testing.T) {
 	c := criarCenario(t)
 	r := c.reservar(t)
@@ -65,6 +69,8 @@ func TestCancelamentoAntesDaPartidaENotificacoes(t *testing.T) {
 	}
 }
 
+// TestCancelamentoEConfirmacaoConcorrentes verifica consistência entre cancelamento de oferta e confirmação concorrente.
+// Recebe: controle de teste t.
 func TestCancelamentoEConfirmacaoConcorrentes(t *testing.T) {
 	c := criarCenario(t)
 	inicio := make(chan struct{})
@@ -95,6 +101,8 @@ func TestCancelamentoEConfirmacaoConcorrentes(t *testing.T) {
 	}
 }
 
+// TestSocketNDJSON verifica comunicação por sockets e delimitação das mensagens NDJSON.
+// Recebe: controle de teste t.
 func TestSocketNDJSON(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -139,9 +147,11 @@ func TestSocketNDJSON(t *testing.T) {
 	}
 }
 
+// TestConexaoOciosaNaoBloqueiaFilaDeRequisicoes verifica que um cliente ocioso não ocupa o trabalhador das mensagens completas.
+// Recebe: controle de teste t.
 func TestConexaoOciosaNaoBloqueiaFilaDeRequisicoes(t *testing.T) {
 	g := NovoGrafo()
-	// O prazo mede atendimento de rede, sem incluir o custo do hash de senha.
+
 	if _, err := g.Cadastrar(protocolo.Cadastro{Nome: "Pessoa Teste", Email: "fila@teste.com", Senha: "senha1234", Perfil: protocolo.Passageiro}); err != nil {
 		t.Fatal(err)
 	}
@@ -184,6 +194,8 @@ func TestConexaoOciosaNaoBloqueiaFilaDeRequisicoes(t *testing.T) {
 	}
 }
 
+// TestAtenderConexaoIgnoraLinhaIncompleta verifica que uma mensagem sem delimitador não executa uma operação.
+// Recebe: controle de teste t.
 func TestAtenderConexaoIgnoraLinhaIncompleta(t *testing.T) {
 	g := NovoGrafo()
 	servidor, cliente := net.Pipe()
@@ -201,6 +213,8 @@ func TestAtenderConexaoIgnoraLinhaIncompleta(t *testing.T) {
 	}
 }
 
+// TestAtenderConexaoRejeitaLinhaAcimaDoLimite verifica rejeição de mensagem TCP maior que o limite permitido.
+// Recebe: controle de teste t.
 func TestAtenderConexaoRejeitaLinhaAcimaDoLimite(t *testing.T) {
 	servidor, cliente := net.Pipe()
 	concluido := make(chan struct{})

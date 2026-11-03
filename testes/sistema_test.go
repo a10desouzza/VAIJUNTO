@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Testa o sistema pela API pública, validando isolamento entre empresas, entradas e busca de itinerários.
 package testes
 
 import (
@@ -18,6 +20,8 @@ import (
 	"vaijunto/internal/servidor"
 )
 
+// TestTresEmpresasConsultamSemMisturarArmazenamento verifica a consulta entre empresas sem compartilhar contas ou estado privado.
+// Recebe: controle de teste t.
 func TestTresEmpresasConsultamSemMisturarArmazenamento(t *testing.T) {
 	ga := grafoPublicado(t, "A", "B")
 	gb := grafoPublicado(t, "B", "C")
@@ -71,6 +75,8 @@ func TestTresEmpresasConsultamSemMisturarArmazenamento(t *testing.T) {
 	}
 }
 
+// TestValidacoesNosLimitesDeTamanhoEUTF8 verifica os limites de tamanho e a rejeição de codificação UTF-8 inválida.
+// Recebe: controle de teste t.
 func TestValidacoesNosLimitesDeTamanhoEUTF8(t *testing.T) {
 	if err := protocolo.ValidarSenha("senha válida 123"); err != nil {
 		t.Fatalf("senha válida recusada: %v", err)
@@ -109,6 +115,8 @@ func TestValidacoesNosLimitesDeTamanhoEUTF8(t *testing.T) {
 	}
 }
 
+// TestPublicacaoInvalidaNaoCriaTrechos verifica que uma publicação recusada não deixa trechos criados parcialmente.
+// Recebe: controle de teste t.
 func TestPublicacaoInvalidaNaoCriaTrechos(t *testing.T) {
 	a := preparar(t)
 	for _, alterar := range []func(*protocolo.PublicacaoCarona){
@@ -143,6 +151,8 @@ func TestPublicacaoInvalidaNaoCriaTrechos(t *testing.T) {
 	}
 }
 
+// TestValidarNomeSenhaECidade verifica entradas aceitas e rejeitadas nas validações de nome, senha e cidade.
+// Recebe: controle de teste t.
 func TestValidarNomeSenhaECidade(t *testing.T) {
 	for _, nome := range []string{"Ana", "João D'Ávila", "Maria-Clara"} {
 		if err := protocolo.ValidarNome(nome); err != nil {
@@ -171,6 +181,8 @@ func TestValidarNomeSenhaECidade(t *testing.T) {
 	}
 }
 
+// TestMultigrafoDataConexoesEOrdenacao verifica ofertas paralelas, conexões temporais e ordenação dos itinerários.
+// Recebe: controle de teste t.
 func TestMultigrafoDataConexoesEOrdenacao(t *testing.T) {
 	a := preparar(t)
 	publicar(t, a, a.motorista, "ab", []string{"A", "B"}, "2099-10-01T08:00:00-03:00", 2)
@@ -196,6 +208,8 @@ func TestMultigrafoDataConexoesEOrdenacao(t *testing.T) {
 	}
 }
 
+// grafoPublicado prepara um gerenciador com uma oferta entre as cidades recebidas.
+// Recebe: controle t e cidades de origem/destino.
 func grafoPublicado(t *testing.T, origem, destino string) *servidor.GrafoItinerarios {
 	t.Helper()
 	g := servidor.NovoGrafo()
@@ -214,6 +228,8 @@ func grafoPublicado(t *testing.T, origem, destino string) *servidor.GrafoItinera
 	return g
 }
 
+// TestVoltarAbandonaCadastroSemRede verifica que voltar do cadastro não inicia uma solicitação de rede.
+// Recebe: controle de teste t.
 func TestVoltarAbandonaCadastroSemRede(t *testing.T) {
 	var saida bytes.Buffer
 	err := cliente.ExecutarMenu("127.0.0.1:1", protocolo.Passageiro, strings.NewReader("2\nAna\n/voltar\n0\n"), &saida)
@@ -228,6 +244,8 @@ func TestVoltarAbandonaCadastroSemRede(t *testing.T) {
 	}
 }
 
+// TestValidarEmail verifica formatos de e-mail válidos e inválidos.
+// Recebe: controle de teste t.
 func TestValidarEmail(t *testing.T) {
 	for _, email := range []string{"ana@exemplo.com", "ana.silva+carona@alunos.uefs.br", "a@menu.test"} {
 		if err := protocolo.ValidarEmail(email); err != nil {
@@ -241,6 +259,8 @@ func TestValidarEmail(t *testing.T) {
 	}
 }
 
+// usuario cadastra e autentica uma conta auxiliar para um teste público.
+// Recebe: controle t, gerenciador, e-mail e perfil.
 func usuario(t testing.TB, g *servidor.GrafoItinerarios, email, perfil string) string {
 	t.Helper()
 	if _, err := g.Cadastrar(protocolo.Cadastro{Nome: "Pessoa Teste", Email: email, Senha: "senha-teste-123", Perfil: perfil}); err != nil {
@@ -253,6 +273,8 @@ func usuario(t testing.TB, g *servidor.GrafoItinerarios, email, perfil string) s
 	return s.ID
 }
 
+// publicar publica uma carona auxiliar no ambiente de teste.
+// Recebe: controle t, ambiente, sessão, chave, rota, partida e vagas.
 func publicar(t testing.TB, a ambiente, sessaoID, chave string, rota []string, hora string, vagas int) protocolo.Carona {
 	t.Helper()
 	c, err := a.g.Publicar(sessaoID, oferta(chave, rota, hora, vagas))
@@ -270,6 +292,8 @@ type ambiente struct {
 	outroPassageiro string
 }
 
+// ids extrai os identificadores dos trechos de uma carona consultada.
+// Recebe: carona consultada.
 func ids(c protocolo.Carona) []string {
 	r := make([]string, len(c.Trechos))
 	for i, t := range c.Trechos {

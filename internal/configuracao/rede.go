@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Define e valida os endereços TCP dos clientes e as identidades e URLs REST das empresas.
 package configuracao
 
 import (
@@ -11,22 +13,17 @@ import (
 	"strings"
 )
 
-// ServidorPadrao atende os testes locais. Para outra maquina, use -servidor
-// ou VAIJUNTO_SERVIDOR com o IP e a porta publicados por ela.
 const ServidorPadrao = "localhost:8080"
 
-// EscutaPadrao recebe conexoes em todas as interfaces, inclusive no Docker.
-// A opcao -endereco :0 pede uma porta livre; o endereco efetivo aparece no log.
 const EscutaPadrao = ":8080"
 
-// ServidorCliente associa o nome apresentado no menu ao endereco TCP da empresa.
 type ServidorCliente struct {
 	Nome     string
 	Endereco string
 }
 
-// ValidarEnderecoCliente rejeita URLs e mapeamentos Docker antes de pedir credenciais.
-// O cliente usa o endereco do computador e apenas a porta TCP publicada nele.
+// ValidarEnderecoCliente rejeita URLs e mapeamentos Docker antes de pedir credenciais. O cliente usa o endereco do computador e apenas a porta TCP publicada nele.
+// Recebe: endereço TCP no formato host:porta.
 func ValidarEnderecoCliente(endereco string) error {
 	host, porta, err := net.SplitHostPort(endereco)
 	if err != nil || strings.TrimSpace(host) == "" || strings.ContainsAny(host, "/ \t\r\n") {
@@ -47,6 +44,7 @@ type Empresa struct {
 var identificadorEmpresa = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 // ValidarEmpresaID verifica se o identificador da empresa respeita o formato e o tamanho permitidos.
+// Recebe: identificador da empresa.
 func ValidarEmpresaID(id string) error {
 	if !identificadorEmpresa.MatchString(id) {
 		return fmt.Errorf("empresa deve ter de 1 a 64 letras, números, hífens ou sublinhados")
@@ -55,6 +53,7 @@ func ValidarEmpresaID(id string) error {
 }
 
 // Empresas usa o formato empresa-b=http://host:porta,empresa-c=http://host:porta.
+// Recebe: lista textual dos pares e ID da empresa local.
 func Empresas(texto, propria string) ([]Empresa, error) {
 	if err := ValidarEmpresaID(propria); err != nil {
 		return nil, err

@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Inicia o simulador de carga TCP local ou distribuído e apresenta suas métricas.
 package main
 
 import (
@@ -12,8 +14,8 @@ import (
 	"vaijunto/internal/configuracao"
 )
 
-// main le endereco, clientes e vagas. Imprime as metricas em JSON e encerra com erro se o teste
-// falhar.
+// main le endereco, clientes e vagas. Imprime as metricas em JSON e encerra com erro se o teste falhar.
+// Recebe: nenhum argumento; lê opções, ambiente e/ou terminal.
 func main() {
 	padrao := os.Getenv("VAIJUNTO_SERVIDOR")
 	if padrao == "" {

@@ -1,3 +1,7 @@
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Testa senhas protegidas, conversão de senhas legadas e avanço concorrente do relógio de Lamport.
 package servidor
 
 import (
@@ -6,10 +10,43 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"vaijunto/internal/protocolo"
 )
 
+// TestLamportMaximoEConcorrencia verifica max(local, recebido)+1 e ausência de perda/repetição em eventos concorrentes.
+// Recebe: controle de teste t.
+func TestLamportMaximoEConcorrencia(t *testing.T) {
+	d := &Distribuido{}
+	if d.evento(0) != 1 || d.evento(100) != 101 || d.evento(2) != 102 {
+		t.Fatal("regra max(local, recebido)+1 incorreta")
+	}
+	var wg sync.WaitGroup
+	marcas := make(chan uint64, 100)
+	for range 100 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			marcas <- d.evento(0)
+		}()
+	}
+	wg.Wait()
+	close(marcas)
+	vistos := make(map[uint64]bool)
+	for marca := range marcas {
+		if marca <= 102 || vistos[marca] {
+			t.Fatalf("evento concorrente repetiu ou retrocedeu: %d", marca)
+		}
+		vistos[marca] = true
+	}
+	if d.relogio != 202 {
+		t.Fatal("eventos concorrentes foram perdidos")
+	}
+}
+
+// TestSenhasComSaltEComparacao verifica salt individual, hash de senha e comparação das credenciais.
+// Recebe: controle de teste t.
 func TestSenhasComSaltEComparacao(t *testing.T) {
 	g := NovoGrafo()
 	for _, email := range []string{"ana@teste.com", "bia@teste.com"} {
@@ -28,6 +65,8 @@ func TestSenhasComSaltEComparacao(t *testing.T) {
 	}
 }
 
+// TestBackupMigraSenhasLegadasSemPerderReservas verifica conversão de senha legada e preservação das reservas no backup.
+// Recebe: controle de teste t.
 func TestBackupMigraSenhasLegadasSemPerderReservas(t *testing.T) {
 	c := criarCenario(t)
 	c.reservar(t)
@@ -64,7 +103,7 @@ func TestBackupMigraSenhasLegadasSemPerderReservas(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Simula o formato legado do projeto, com senha em texto puro.
+
 	conta := estado.Usuarios["p@teste.com"]
 	conta.Senha = "senha1234"
 	estado.Usuarios["p@teste.com"] = conta
@@ -82,7 +121,7 @@ func TestBackupMigraSenhasLegadasSemPerderReservas(t *testing.T) {
 	if err != nil || len(reservas) != 1 || reservas[0].Status != protocolo.Ativa {
 		t.Fatalf("reserva perdida: %+v %v", reservas, err)
 	}
-	// Um hash novo danificado nao pode ser convertido como se fosse senha antiga.
+
 	conta.Senha = "pbkdf2-sha256$600000$zz$00"
 	estado.Usuarios["p@teste.com"] = conta
 	gravar()

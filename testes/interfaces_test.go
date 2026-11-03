@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Testa interfaces públicas, menus TCP, concorrência, autenticação REST e configuração de rede.
 package testes
 
 import (
@@ -23,6 +25,8 @@ import (
 	"vaijunto/internal/servidor"
 )
 
+// TestEscolhaDaEmpresaAntesDoCadastro verifica a escolha da empresa antes de enviar credenciais ou cadastrar.
+// Recebe: controle de teste t.
 func TestEscolhaDaEmpresaAntesDoCadastro(t *testing.T) {
 	nomes := []string{"VAIJUNTO", "Minas", "São Paulo"}
 	for escolhida, nome := range nomes {
@@ -66,13 +70,15 @@ func TestEscolhaDaEmpresaAntesDoCadastro(t *testing.T) {
 	}
 }
 
+// TestMenusFluxoCompletoTCP verifica o fluxo dos menus de motorista e passageiro pela interface TCP.
+// Recebe: controle de teste t.
 func TestMenusFluxoCompletoTCP(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancelar := context.WithCancel(context.Background())
-	fim := make(chan error, 1) // cria um canal para receber o resultado do servidor
+	fim := make(chan error, 1)
 	go func() {
 		fim <- servidor.Servir(ctx, listener, servidor.NovoGrafo(), time.Second)
 	}()
@@ -83,7 +89,7 @@ func TestMenusFluxoCompletoTCP(t *testing.T) {
 		}
 	}()
 	executar := func(perfil, entrada string, esperados ...string) {
-		t.Helper() // marca a função como auxiliar para melhorar a saída de erros
+		t.Helper()
 		var saida bytes.Buffer
 		if err := cliente.ExecutarMenu(listener.Addr().String(), perfil, strings.NewReader(entrada), &saida); err != nil {
 			t.Fatal(err)
@@ -104,6 +110,8 @@ func TestMenusFluxoCompletoTCP(t *testing.T) {
 	executar(protocolo.Motorista, "1\nana@menu.test\nsenha1234\n2\n3\n1\n1\n2\n0\n", "3/3 vagas", "Carona cancelada", "CANCELADA")
 }
 
+// TestConcorrenciaUltimoAssento verifica que pedidos concorrentes não confirmam a mesma última vaga.
+// Recebe: controle de teste t.
 func TestConcorrenciaUltimoAssento(t *testing.T) {
 	a := preparar(t)
 	c := publicar(t, a, a.motorista, "abc", []string{"A", "B", "C"}, "2099-10-01T08:00:00-03:00", 1)
@@ -140,6 +148,8 @@ func TestConcorrenciaUltimoAssento(t *testing.T) {
 	}
 }
 
+// TestRespostaPerdidaPodeSerRecuperada verifica que repetir a chave recupera o resultado sem duplicar a reserva.
+// Recebe: controle de teste t.
 func TestRespostaPerdidaPodeSerRecuperada(t *testing.T) {
 	a := preparar(t)
 	c := publicar(t, a, a.motorista, "ab", []string{"A", "B"}, "2099-10-01T08:00:00-03:00", 1)
@@ -172,6 +182,8 @@ func TestRespostaPerdidaPodeSerRecuperada(t *testing.T) {
 	}
 }
 
+// TestAtomicidadeEAssentoPorTrecho verifica alocação integral e numeração de assentos por trecho.
+// Recebe: controle de teste t.
 func TestAtomicidadeEAssentoPorTrecho(t *testing.T) {
 	a := preparar(t)
 	c := publicar(t, a, a.motorista, "abc", []string{"A", "B", "C"}, "2099-10-01T08:00:00-03:00", 1)
@@ -192,6 +204,8 @@ func TestAtomicidadeEAssentoPorTrecho(t *testing.T) {
 	}
 }
 
+// TestRESTExigeTokenERejeitaIdentidadeDivergente verifica autenticação REST e rejeição de catálogo com identidade incorreta.
+// Recebe: controle de teste t.
 func TestRESTExigeTokenERejeitaIdentidadeDivergente(t *testing.T) {
 	g := servidor.NovoGrafo()
 	api := novaTeste(t, "empresa-a", g, nil)
@@ -212,6 +226,8 @@ func TestRESTExigeTokenERejeitaIdentidadeDivergente(t *testing.T) {
 	}
 }
 
+// TestAgruparTrechosIdentificaEmpresaEPreservaOrdemLocal verifica agrupamento por dono sem confundir IDs locais nem reordenar seus trechos.
+// Recebe: controle de teste t.
 func TestAgruparTrechosIdentificaEmpresaEPreservaOrdemLocal(t *testing.T) {
 	p := protocolo.ReservaDistribuida{Chave: "viagem", Trechos: []protocolo.ReferenciaTrecho{{EmpresaID: "empresa-a", TrechoID: "T1"}, {EmpresaID: "empresa-b", TrechoID: "T1"}, {EmpresaID: "empresa-a", TrechoID: "T2"}}}
 	g, err := consorcio.AgruparTrechos(p)
@@ -228,6 +244,8 @@ func TestAgruparTrechosIdentificaEmpresaEPreservaOrdemLocal(t *testing.T) {
 	}
 }
 
+// TestValidarEnderecoCliente verifica a validação de endereços TCP destinados aos clientes.
+// Recebe: controle de teste t.
 func TestValidarEnderecoCliente(t *testing.T) {
 	for _, endereco := range []string{"172.16.103.7:8080", "localhost:7001", "empresa-a:8080", "[::1]:8080"} {
 		if err := configuracao.ValidarEnderecoCliente(endereco); err != nil {
@@ -241,6 +259,8 @@ func TestValidarEnderecoCliente(t *testing.T) {
 	}
 }
 
+// TestEmpresas verifica a interpretação dos pares e a rejeição de configuração inválida.
+// Recebe: controle de teste t.
 func TestEmpresas(t *testing.T) {
 	for _, texto := range []string{"empresa-a=http://localhost:8001", "b=http://localhost:8002,b=http://localhost:8003", "b=ftp://localhost", "b=http://usuario:senha@localhost", "b=http://localhost/trechos", "b=sem-host"} {
 		if _, err := configuracao.Empresas(texto, "empresa-a"); err == nil {
@@ -253,6 +273,8 @@ func TestEmpresas(t *testing.T) {
 	}
 }
 
+// novaTeste configura uma API de catálogo para os testes de interface pública.
+// Recebe: controle t, identidade, fonte local e pares.
 func novaTeste(t *testing.T, id string, g consorcio.Fonte, pares []configuracao.Empresa) *consorcio.API {
 	t.Helper()
 	a, err := consorcio.NovaAPI(id, tokenTeste, pares, g, time.Second)
@@ -262,6 +284,8 @@ func novaTeste(t *testing.T, id string, g consorcio.Fonte, pares []configuracao.
 	return a
 }
 
+// oferta monta uma publicação de teste com preços e tempos conhecidos por trecho.
+// Recebe: chave, rota, partida e vagas.
 func oferta(chave string, rota []string, hora string, vagas int) protocolo.PublicacaoCarona {
 	trechos := make([]protocolo.OfertaTrecho, len(rota)-1)
 	for i := range trechos {
@@ -270,6 +294,8 @@ func oferta(chave string, rota []string, hora string, vagas int) protocolo.Publi
 	return protocolo.PublicacaoCarona{Chave: chave, Rota: rota, DataHora: hora, Assentos: vagas, Trechos: trechos}
 }
 
+// preparar cria o ambiente de teste com gerenciador e usuários autenticados.
+// Recebe: controle de teste t.
 func preparar(t testing.TB) ambiente {
 	t.Helper()
 	g := servidor.NovoGrafo()

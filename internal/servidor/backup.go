@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Persiste e restaura o estado privado da empresa, as transações 2PC e o relógio de Lamport.
 package servidor
 
 import (
@@ -75,15 +77,17 @@ type transacaoBackup struct {
 }
 
 type consorcioBackup struct {
-	Geracao   string                       `json:"geracao"`
-	Relogio   uint64                       `json:"relogio"`
-	Membros   []string                     `json:"membros"`
-	TokenHash string                       `json:"token_hash"`
-	Registros map[string]*registroConsenso `json:"registros"`
-	Origens   map[string]*operacaoOrigem   `json:"origens"`
+	Relogio   uint64                        `json:"lamport"`
+	Geracao   string                        `json:"geracao"`
+	Sequencia uint64                        `json:"sequencia"`
+	Membros   []string                      `json:"membros"`
+	TokenHash string                        `json:"token_hash"`
+	Registros map[string]*registroTransacao `json:"registros"`
+	Origens   map[string]*operacaoOrigem    `json:"origens"`
 }
 
-// silenciosamente reiniciar sem as promessas antigas permitiria votos conflitantes.
+// AbrirBackup Backup v2 pertence ao 2PC; nunca converte registros de outro protocolo silenciosamente.
+// Recebe: identidade da empresa e caminho do arquivo.
 func (g *GrafoItinerarios) AbrirBackup(empresa, caminho string) error {
 	if caminho == "" {
 		return nil
@@ -102,8 +106,8 @@ func (g *GrafoItinerarios) AbrirBackup(empresa, caminho string) error {
 		if err := json.Unmarshal(conteudo, &arquivo); err != nil {
 			return fmt.Errorf("backup invalido: %w", err)
 		}
-		if arquivo.Versao != 1 || arquivo.Empresa != empresa || hashBytes(arquivo.Estado) != arquivo.Checksum {
-			return fmt.Errorf("backup com versao, empresa ou checksum divergente")
+		if arquivo.Versao != 2 || arquivo.Empresa != empresa || hashBytes(arquivo.Estado) != arquivo.Checksum {
+			return fmt.Errorf("backup incompativel (2PC exige versao 2), empresa ou checksum divergente")
 		}
 		var estado estadoBackup
 		if err := json.Unmarshal(arquivo.Estado, &estado); err != nil {
@@ -118,9 +122,8 @@ func (g *GrafoItinerarios) AbrirBackup(empresa, caminho string) error {
 	return g.SalvarBackup()
 }
 
-// SalvarBackup grava e sincroniza um temporario antes de substituir o arquivo.
-// O sucesso de uma escrita so e respondido depois dessa etapa. A trava do backup
-// impede que uma gravacao antiga sobrescreva uma fotografia mais recente.
+// SalvarBackup grava e sincroniza um temporario antes de substituir o arquivo. O sucesso de uma escrita so e respondido depois dessa etapa. A trava do backup impede que uma gravacao antiga sobrescreva uma fotografia mais recente.
+// Recebe: estado local g com backup configurado.
 func (g *GrafoItinerarios) SalvarBackup() error {
 	b := g.backup
 	if b == nil {
@@ -132,7 +135,7 @@ func (g *GrafoItinerarios) SalvarBackup() error {
 	if err != nil {
 		return err
 	}
-	conteudo, err := json.Marshal(arquivoBackup{Versao: 1, Empresa: b.empresa, SalvoEm: time.Now().UTC(), Checksum: hashBytes(estado), Estado: estado})
+	conteudo, err := json.Marshal(arquivoBackup{Versao: 2, Empresa: b.empresa, SalvoEm: time.Now().UTC(), Checksum: hashBytes(estado), Estado: estado})
 	if err != nil {
 		return err
 	}
@@ -143,12 +146,14 @@ func (g *GrafoItinerarios) SalvarBackup() error {
 }
 
 // hashBytes calcula o checksum SHA-256 dos bytes do estado salvo.
+// Recebe: bytes do estado serializado.
 func hashBytes(conteudo []byte) string {
 	hash := sha256.Sum256(conteudo)
 	return hex.EncodeToString(hash[:])
 }
 
-// fotografarEstado captura dados locais e votos sob as travas de leitura do estado.
+// fotografarEstado captura dados locais, preparacoes e decisoes 2PC sob trava.
+// Recebe: estado local g e coordenação associada.
 func (g *GrafoItinerarios) fotografarEstado() ([]byte, error) {
 	d := g.distribuido
 	if d != nil {
@@ -181,12 +186,13 @@ func (g *GrafoItinerarios) fotografarEstado() ([]byte, error) {
 		e.Transacoes[id] = transacaoBackup{t.pedido, t.estado, t.assentos, t.motivo, t.reservaID, t.ordem}
 	}
 	if d != nil {
-		e.Consorcio = &consorcioBackup{d.geracao, d.relogio, d.membros, hashBytes([]byte(d.token)), d.registros, d.origens}
+		e.Consorcio = &consorcioBackup{d.relogio, d.geracao, d.sequencia, d.membros, hashBytes([]byte(d.token)), d.registros, d.origens}
 	}
 	return json.Marshal(e)
 }
 
 // restaurarBackup valida as referencias antes de remontar os mapas e o protocolo.
+// Recebe: fotografia já decodificada.
 func (g *GrafoItinerarios) restaurarBackup(e estadoBackup) error {
 	if e.Usuarios == nil || e.Caronas == nil || e.Trechos == nil || e.Reservas == nil || e.Chaves == nil || e.Transacoes == nil || e.Notificacoes == nil {
 		return fmt.Errorf("backup incompleto")
@@ -224,7 +230,7 @@ func (g *GrafoItinerarios) restaurarBackup(e estadoBackup) error {
 		}
 	}
 	for email, c := range e.Usuarios {
-		// Backups antigos sao convertidos e regravados por AbrirBackup.
+
 		if !strings.HasPrefix(c.Senha, "pbkdf2-sha256$") {
 			if err := protocolo.ValidarSenha(c.Senha); err != nil {
 				return fmt.Errorf("senha legada invalida: %w", err)
@@ -257,13 +263,18 @@ func (g *GrafoItinerarios) restaurarBackup(e estadoBackup) error {
 	g.reservas, g.notificacoes, g.sequencia = e.Reservas, e.Notificacoes, e.Sequencia
 	if c := e.Consorcio; c != nil {
 		d := g.distribuido
-		d.geracao, d.relogio, d.registros, d.origens = c.Geracao, c.Relogio, c.Registros, c.Origens
+		d.geracao, d.sequencia, d.registros, d.origens = c.Geracao, c.Sequencia, c.Registros, c.Origens
+		d.relogio = c.Relogio
+		for _, r := range d.registros {
+			d.relogio = max(d.relogio, r.Meta.Lamport)
+		}
 	}
-	// Sessoes sao temporarias: o usuario entra novamente apos a recuperacao.
+
 	return nil
 }
 
 // substituirArquivo conserva o arquivo atual ate a nova gravacao estar sincronizada.
+// Recebe: caminho final e conteúdo.
 func substituirArquivo(caminho string, conteudo []byte) error {
 	pasta := filepath.Dir(caminho)
 	if err := os.MkdirAll(pasta, 0700); err != nil {

@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Inicializa a empresa, o backup local, o atendimento TCP, a API REST e a recuperação do 2PC.
 package main
 
 import (
@@ -18,8 +20,8 @@ import (
 	"vaijunto/internal/servidor"
 )
 
-// main inicia o estado local da empresa e, opcionalmente, sua API REST.
-// Ctrl+C encerra os dois transportes.
+// main inicia o estado local da empresa e, opcionalmente, sua API REST. Ctrl+C encerra os dois transportes.
+// Recebe: nenhum argumento; lê opções, ambiente e/ou terminal.
 func main() {
 	padrao := os.Getenv("VAIJUNTO_ENDERECO")
 	if padrao == "" {
@@ -107,6 +109,7 @@ func main() {
 }
 
 // ambiente consulta a variavel de ambiente recebida e usa o valor padrao se ela estiver vazia.
+// Recebe: nome da variável e valor padrão.
 func ambiente(nome, padrao string) string {
 	if valor := os.Getenv(nome); valor != "" {
 		return valor

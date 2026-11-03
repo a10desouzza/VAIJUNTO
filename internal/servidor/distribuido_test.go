@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Cria empresas de teste e verifica reservas, cancelamentos e disputas por vagas entre origens.
 package servidor
 
 import (
@@ -28,6 +30,8 @@ type empresaTeste struct {
 	carona                protocolo.Carona
 }
 
+// TestConsorcioCargaTCPDeTresEmpresas verifica integridade sob carga TCP concorrente nas três empresas.
+// Recebe: controle de teste t.
 func TestConsorcioCargaTCPDeTresEmpresas(t *testing.T) {
 	es := criarConsorcio(t, 1)
 	ctx, cancelar := context.WithCancel(context.Background())
@@ -67,6 +71,8 @@ func TestConsorcioCargaTCPDeTresEmpresas(t *testing.T) {
 	t.Logf("carga em três empresas: %+v", m)
 }
 
+// TestConsorcioCancelamentoPeloMotoristaLiberaTodosOsTrechos verifica liberação conjunta após cancelamento solicitado por motorista.
+// Recebe: controle de teste t.
 func TestConsorcioCancelamentoPeloMotoristaLiberaTodosOsTrechos(t *testing.T) {
 	es := criarConsorcio(t, 1)
 	r, err := es[0].d.reservar(es[0].passageiro, pedidoTeste(es, "motorista"))
@@ -82,6 +88,8 @@ func TestConsorcioCancelamentoPeloMotoristaLiberaTodosOsTrechos(t *testing.T) {
 	}
 }
 
+// criarConsorcio inicializa três empresas de teste com HTTP isolado, usuários e ofertas conectadas.
+// Recebe: controle de teste t e vagas por trecho.
 func criarConsorcio(t *testing.T, vagas int) []*empresaTeste {
 	t.Helper()
 	es := make([]*empresaTeste, 3)
@@ -143,6 +151,8 @@ func criarConsorcio(t *testing.T, vagas int) []*empresaTeste {
 	return es
 }
 
+// pedidoTeste monta referências das ofertas das empresas para um pedido de reserva de teste.
+// Recebe: empresas e chave.
 func pedidoTeste(es []*empresaTeste, chave string) protocolo.ReservaItinerario {
 	p := protocolo.ReservaItinerario{Chave: chave}
 	for i, e := range es {
@@ -151,6 +161,8 @@ func pedidoTeste(es []*empresaTeste, chave string) protocolo.ReservaItinerario {
 	return p
 }
 
+// verificarVagas confere os contadores e mapas de ocupação esperados em cada empresa.
+// Recebe: controle t, empresas e contagens esperadas.
 func verificarVagas(t *testing.T, es []*empresaTeste, livres, ocupados, preparados int) {
 	t.Helper()
 	for _, e := range es {
@@ -164,6 +176,8 @@ func verificarVagas(t *testing.T, es []*empresaTeste, livres, ocupados, preparad
 	}
 }
 
+// TestConsorcioBuscaReservaRepeticaoECancelamento verifica busca, reserva distribuída, repetição e cancelamento do itinerário.
+// Recebe: controle de teste t.
 func TestConsorcioBuscaReservaRepeticaoECancelamento(t *testing.T) {
 	es := criarConsorcio(t, 2)
 	d := es[0].d
@@ -197,6 +211,8 @@ func TestConsorcioBuscaReservaRepeticaoECancelamento(t *testing.T) {
 	}
 }
 
+// TestConsorcioUltimaVagaDisputadaPorTresOrigens verifica uma única confirmação na disputa da última vaga por três origens.
+// Recebe: controle de teste t.
 func TestConsorcioUltimaVagaDisputadaPorTresOrigens(t *testing.T) {
 	es := criarConsorcio(t, 1)
 	var wg sync.WaitGroup
@@ -222,10 +238,13 @@ func TestConsorcioUltimaVagaDisputadaPorTresOrigens(t *testing.T) {
 	verificarVagas(t, es, 0, 1, 0)
 }
 
+// TestConsorcioDisputaDoisTrechosEntreDuasOrigens verifica que dois donos confirmam o mesmo vencedor na disputa de um itinerário.
+// Recebe: controle de teste t.
 func TestConsorcioDisputaDoisTrechosEntreDuasOrigens(t *testing.T) {
 	empresas := criarConsorcio(t, 1)
 	participantes := empresas[:2]
 	inicio := make(chan struct{})
+
 	type resultado struct {
 		reserva protocolo.Reserva
 		err     error

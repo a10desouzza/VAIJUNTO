@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Atende sockets TCP com NDJSON, limites, timeouts e filas de leitura e escrita com um trabalhador.
 package servidor
 
 import (
@@ -14,9 +16,8 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-// AtenderConexao Le ate a quebra de linha e processa somente mensagens completas. Renova os
-// prazos de rede, envia cada resposta e aceita a proxima linha. Uma linha incompleta nao executa a
-// operacao; falhar ao enviar a resposta nao desfaz uma operacao que ja foi concluida.
+// AtenderConexao Le ate a quebra de linha e processa somente mensagens completas. Renova os prazos de rede, envia cada resposta e aceita a proxima linha. Uma linha incompleta nao executa a operacao; falhar ao enviar a resposta nao desfaz uma operacao que ja foi concluida.
+// Recebe: socket, gerenciador e timeout por mensagem.
 func AtenderConexao(conn net.Conn, g *GrafoItinerarios, timeout time.Duration) {
 	atenderConexao(conn, timeout, func(mensagem []byte) []byte {
 		g.limparSessoesExpiradas()
@@ -25,18 +26,19 @@ func AtenderConexao(conn net.Conn, g *GrafoItinerarios, timeout time.Duration) {
 }
 
 // atenderConexao le mensagens NDJSON completas, chama o processador e envia respostas ate ocorrer falha ou encerramento; fecha a conexao ao sair.
+// Recebe: socket, timeout e função processadora.
 func atenderConexao(conn net.Conn, timeout time.Duration, processar func([]byte) []byte) {
 	defer conn.Close()
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	// Requisicoes pequenas nao precisam reservar 1 MiB por conexao.
+
 	leitor := bufio.NewReaderSize(conn, 4096)
 	for {
 		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 			return
 		}
-		/* Espera o delimitador. EOF no meio da linha nao executa uma requisicao incompleta. */
+
 		linha, err := lerMensagem(leitor)
 		if err != nil {
 			if errors.Is(err, bufio.ErrBufferFull) {
@@ -55,8 +57,8 @@ func atenderConexao(conn net.Conn, timeout time.Duration, processar func([]byte)
 	}
 }
 
-// lerMensagem acumula somente quando a linha ultrapassa o buffer inicial.
-// Mantem o limite de 1 MiB e nunca executa uma linha incompleta.
+// lerMensagem acumula somente quando a linha ultrapassa o buffer inicial. Mantem o limite de 1 MiB e nunca executa uma linha incompleta.
+// Recebe: leitor com buffer da conexão.
 func lerMensagem(leitor *bufio.Reader) ([]byte, error) {
 	var linha []byte
 	for {
@@ -75,8 +77,8 @@ func lerMensagem(leitor *bufio.Reader) ([]byte, error) {
 	}
 }
 
-// escrever repete Write quando apenas parte do buffer foi enviada, ate transmitir todos os bytes
-// ou falhar.
+// escrever repete Write quando apenas parte do buffer foi enviada, ate transmitir todos os bytes ou falhar.
+// Recebe: destino de escrita e bytes.
 func escrever(w io.Writer, b []byte) error {
 	for len(b) > 0 {
 		n, err := w.Write(b)
@@ -91,8 +93,8 @@ func escrever(w io.Writer, b []byte) error {
 	return nil
 }
 
-// Servir separa o transporte da execucao: leitores aguardam os sockets e um
-// trabalhador processa as mensagens. Uma conexao ociosa nao ocupa esse trabalhador.
+// Servir separa o transporte da execucao: leitores aguardam os sockets e um trabalhador processa as mensagens. Uma conexao ociosa nao ocupa esse trabalhador.
+// Recebe: contexto, ponto de escuta, gerenciador e timeout.
 func Servir(ctx context.Context, listener net.Listener, g *GrafoItinerarios, timeout time.Duration) error {
 	ctx, cancelar := context.WithCancel(ctx)
 	defer cancelar()
@@ -176,14 +178,13 @@ type requisicaoNaFila struct {
 	resposta chan []byte
 }
 
-// As duas filas compartilham um trabalhador. Alternar a preferencia impede que
-// consultas continuas deixem as escritas esperando, ou vice-versa.
 type filaRequisicoes struct {
 	leituras chan requisicaoNaFila
 	escritas chan requisicaoNaFila
 }
 
 // novaFila cria duas filas com capacidade de 128 mensagens cada.
+// Recebe: nenhum argumento.
 func novaFila() *filaRequisicoes {
 	return &filaRequisicoes{
 		leituras: make(chan requisicaoNaFila, 128),
@@ -192,6 +193,7 @@ func novaFila() *filaRequisicoes {
 }
 
 // executar enfileira uma mensagem completa e espera apenas a resposta dela.
+// Recebe: contexto e mensagem completa, no receptor f.
 func (f *filaRequisicoes) executar(ctx context.Context, mensagem []byte) []byte {
 	fila := f.escritas
 	if mensagemDeConsulta(mensagem) {
@@ -214,6 +216,7 @@ func (f *filaRequisicoes) executar(ctx context.Context, mensagem []byte) []byte 
 }
 
 // atender e o unico trabalhador das mensagens TCP, alternando leituras e escritas.
+// Recebe: contexto e gerenciador, no receptor f.
 func (f *filaRequisicoes) atender(ctx context.Context, g *GrafoItinerarios) {
 	preferida, outra := f.leituras, f.escritas
 	for {
@@ -238,6 +241,7 @@ func (f *filaRequisicoes) atender(ctx context.Context, g *GrafoItinerarios) {
 }
 
 // respostaOcupado codifica uma resposta de erro para sobrecarga ou encerramento do servidor.
+// Recebe: motivo da recusa.
 func respostaOcupado(mensagem string) []byte {
 	return codificarResposta(protocolo.Resposta{Status: protocolo.Erro, Mensagem: mensagem})
 }

@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Simula buscas e reservas concorrentes nas três empresas e verifica a integridade dos assentos.
 package carga
 
 import (
@@ -13,8 +15,8 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-// ExecutarConsorcio gera buscas e reservas a partir das tres empresas. Confere
-// os assentos locais contra as transacoes globais, e nao apenas respostas HTTP.
+// ExecutarConsorcio gera buscas e reservas a partir das tres empresas. Confere os assentos locais contra as transacoes globais, e nao apenas respostas HTTP.
+// Recebe: três endereços TCP, quantidade de clientes e vagas.
 func ExecutarConsorcio(enderecos []string, quantidade, vagas int) (Metricas, error) {
 	m := Metricas{Empresas: len(enderecos), Clientes: quantidade, VagasPorTrecho: vagas}
 	if len(enderecos) != 3 || quantidade < 1 || quantidade > 200 || vagas < 1 || vagas > 100 {
@@ -39,6 +41,7 @@ func ExecutarConsorcio(enderecos []string, quantidade, vagas int) (Metricas, err
 			return m, err
 		}
 	}
+
 	type resultado struct {
 		Reserva    protocolo.Reserva
 		Transporte bool
@@ -187,8 +190,7 @@ func ExecutarConsorcio(enderecos []string, quantidade, vagas int) (Metricas, err
 		}
 	}
 	m.calcularTempos(latencias, duracao)
-	// Contencao pode abortar tentativas sem consumir todas as vagas; seguranca
-	// nao deve ser confundida com exigir uma taxa artificial de confirmacoes.
+
 	m.Integridade = integridade && m.Pendentes == 0 && m.ErrosTransporte == 0 && m.Confirmadas <= min(quantidade, vagas) && m.Confirmadas > 0
 	if !m.Integridade {
 		return m, fmt.Errorf("carga distribuída encontrou inconsistência, pendência ou falha de transporte")

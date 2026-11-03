@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Valida mensagens JSON e encaminha cada ação do protocolo TCP à operação correspondente.
 package servidor
 
 import (
@@ -13,8 +15,8 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-// verificarJSON percorre objetos e listas para rejeitar chaves duplicadas, inclusive nos dados
-// internos.
+// verificarJSON percorre objetos e listas para rejeitar chaves duplicadas, inclusive nos dados internos.
+// Recebe: decodificador posicionado no próximo valor JSON.
 func verificarJSON(d *json.Decoder) error {
 	elemento, err := d.Token()
 	if err != nil {
@@ -54,8 +56,8 @@ func verificarJSON(d *json.Decoder) error {
 	return err
 }
 
-// decodificar exige um unico objeto JSON UTF-8, rejeita campos desconhecidos e preenche alvo ou
-// retorna erro.
+// decodificar exige um unico objeto JSON UTF-8, rejeita campos desconhecidos e preenche alvo ou retorna erro.
+// Recebe: bytes JSON e ponteiro de destino.
 func decodificar(dados []byte, alvo any) error {
 	dados = bytes.TrimSpace(dados)
 	if len(dados) == 0 || dados[0] != '{' || !utf8.Valid(dados) || !json.Valid(dados) {
@@ -66,11 +68,12 @@ func decodificar(dados []byte, alvo any) error {
 	}
 	d := json.NewDecoder(bytes.NewReader(dados))
 	d.DisallowUnknownFields()
-	// json.Valid acima ja exige um unico valor JSON completo.
+
 	return d.Decode(alvo)
 }
 
 // ProcessarMensagem transforma o resultado da operacao em uma resposta padrao de SUCESSO ou ERRO.
+// Recebe: mensagem TCP e gerenciador local.
 func ProcessarMensagem(mensagem []byte, g *GrafoItinerarios) []byte {
 	dados, err := processar(mensagem, g)
 	if !mensagemDeConsulta(mensagem) {
@@ -85,8 +88,8 @@ func ProcessarMensagem(mensagem []byte, g *GrafoItinerarios) []byte {
 	return codificarResposta(protocolo.Resposta{Status: protocolo.Sucesso, Mensagem: "Operação concluída.", Dados: dados})
 }
 
-// Consultas nao gravam o arquivo. Uma mensagem desconhecida segue pela fila de
-// escrita para nunca classificar uma alteracao como leitura por engano.
+// mensagemDeConsulta Consultas nao gravam o arquivo. Uma mensagem desconhecida segue pela fila de escrita para nunca classificar uma alteracao como leitura por engano.
+// Recebe: mensagem JSON recebida.
 func mensagemDeConsulta(mensagem []byte) bool {
 	var req protocolo.Requisicao
 	if json.Unmarshal(mensagem, &req) != nil {
@@ -100,8 +103,8 @@ func mensagemDeConsulta(mensagem []byte) bool {
 	}
 }
 
-// processar le o envelope e chama a funcao da acao. Cada operacao possui seu proprio tipo de
-// dados.
+// processar le o envelope e chama a funcao da acao. Cada operacao possui seu proprio tipo de dados.
+// Recebe: envelope JSON e gerenciador local.
 func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 	if len(mensagem) >= protocolo.LimiteMensagem {
 		return nil, fmt.Errorf("mensagem excede o limite de 1 MiB")
@@ -197,6 +200,7 @@ func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 }
 
 // codificarResposta serializa a resposta e acrescenta a quebra de linha exigida pelo protocolo.
+// Recebe: resposta do protocolo.
 func codificarResposta(r protocolo.Resposta) []byte {
 	dados, err := json.Marshal(r)
 	if err != nil {
@@ -206,6 +210,7 @@ func codificarResposta(r protocolo.Resposta) []byte {
 }
 
 // validarPreparacao valida identidade, participantes, horario e lista de trechos do pedido de preparacao.
+// Recebe: pedido de preparação local.
 func validarPreparacao(pedido protocolo.PedidoPreparacao) error {
 	if strings.TrimSpace(pedido.TransacaoID) == "" || len(pedido.TransacaoID) > 128 {
 		return fmt.Errorf("transacao invalida")

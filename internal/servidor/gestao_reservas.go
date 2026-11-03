@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Atualiza e consulta reservas globais, coordena cancelamentos e registra notificações locais.
 package servidor
 
 import (
@@ -10,6 +12,8 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
+// reservaOrigem consulta uma cópia da visão global da reserva mantida na empresa de origem.
+// Recebe: ID da operação iniciada nesta empresa.
 func (d *Distribuido) reservaOrigem(id string) protocolo.Reserva {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -19,6 +23,8 @@ func (d *Distribuido) reservaOrigem(id string) protocolo.Reserva {
 	return protocolo.Reserva{}
 }
 
+// atualizarOrigem reenvia a decisão e atualiza o estado global com os resultados dos donos.
+// Recebe: contexto e ID da operação.
 func (d *Distribuido) atualizarOrigem(ctx context.Context, id string) {
 	d.mu.Lock()
 	op := copiaJSON(d.origens[id])
@@ -60,6 +66,8 @@ func (d *Distribuido) atualizarOrigem(ctx context.Context, id string) {
 	}
 }
 
+// atualizarOrigens seleciona e tenta atualizar as reservas globais ainda pendentes.
+// Recebe: contexto e operações locais d.
 func (d *Distribuido) atualizarOrigens(ctx context.Context) {
 	d.mu.Lock()
 	ids := make([]string, 0)
@@ -74,6 +82,8 @@ func (d *Distribuido) atualizarOrigens(ctx context.Context) {
 	}
 }
 
+// consultar reúne reservas do passageiro e informa empresas indisponíveis.
+// Recebe: sessão do passageiro.
 func (d *Distribuido) consultar(sessao string) ([]protocolo.Reserva, error) {
 	d.g.mu.RLock()
 	u, err := d.g.autorizar(sessao, protocolo.Passageiro)
@@ -117,6 +127,8 @@ func (d *Distribuido) consultar(sessao string) ([]protocolo.Reserva, error) {
 	return locais, nil
 }
 
+// cancelar valida o passageiro e escolhe o fluxo de cancelamento local ou distribuído.
+// Recebe: sessão do passageiro e ID da reserva.
 func (d *Distribuido) cancelar(sessao, id string) (protocolo.Reserva, error) {
 	d.g.mu.RLock()
 	u, err := d.g.autorizar(sessao, protocolo.Passageiro)
@@ -139,7 +151,13 @@ func (d *Distribuido) cancelar(sessao, id string) (protocolo.Reserva, error) {
 	return d.reservaOrigem(id), nil
 }
 
+// cancelarGlobal encaminha à origem ou coordena preparação e decisão do cancelamento distribuído.
+// Recebe: contexto, metadados originais e motivo.
 func (d *Distribuido) cancelarGlobal(ctx context.Context, original metaTransacao, motivo string) error {
+	if original.Origem != d.id {
+		var resposta resultadoRPC
+		return d.chamar(ctx, original.Origem, "cancelar", pedidoCancelamento{ID: original.ID, Motivo: motivo}, &resposta)
+	}
 	liberar := travarOperacao(&d.chamadas, original.ID+":cancelar")
 	defer liberar()
 	ctx, cancelar := context.WithTimeout(ctx, 20*time.Second)
@@ -158,9 +176,9 @@ func (d *Distribuido) cancelarGlobal(ctx context.Context, original metaTransacao
 	d.mu.Lock()
 	existente := copiaJSON(d.registros[m.ID])
 	if existente != nil && existente.Final != nil && existente.Final.Valor.Estado == "ABORTAR" {
-		// Uma recusa anterior nao impede tentar um novo cancelamento depois.
-		d.relogio++
-		m.ID = original.ID + ":c:" + hashJSON([]any{d.geracao, d.relogio})[:16]
+
+		d.sequencia++
+		m.ID = original.ID + ":c:" + hashJSON([]any{d.geracao, d.sequencia})[:16]
 		existente = nil
 		for empresa, q := range pedidos {
 			q.TransacaoID = m.ID
@@ -168,27 +186,38 @@ func (d *Distribuido) cancelarGlobal(ctx context.Context, original metaTransacao
 			m.Hashes[empresa] = hashJSON(q)
 		}
 	}
+	if existente != nil {
+		m.Lamport = existente.Meta.Lamport
+	}
+	if existente == nil {
+		d.relogio++
+		m.Lamport = d.relogio
+		d.registros[m.ID] = &registroTransacao{Meta: m, Criado: time.Now()}
+	} else if hashJSON(existente.Meta) != hashJSON(m) {
+		d.mu.Unlock()
+		return fmt.Errorf("cancelamento com metadados divergentes")
+	}
 	d.mu.Unlock()
 	if err := d.g.SalvarBackup(); err != nil {
 		return err
 	}
-	var cert certificado
+	var final decisaoFinal
 	var err error
 	if existente != nil && existente.Final != nil {
-		cert = *existente.Final
+		final = *existente.Final
 	} else {
 		v := d.prepararParticipantes(ctx, m, pedidos)
 		if v.Estado == "CONFIRMAR" {
 			v.Motivo = motivo
 		}
-		cert, err = d.decidir(ctx, m, v)
+		final, err = d.decidir(ctx, m, v)
 		if err != nil {
 			return err
 		}
 	}
-	rs := d.propagar(ctx, cert)
-	if cert.Valor.Estado != "CONFIRMAR" {
-		return fmt.Errorf("cancelamento recusado: %s", cert.Valor.Motivo)
+	rs := d.propagar(ctx, final)
+	if final.Valor.Estado != "CONFIRMAR" {
+		return fmt.Errorf("cancelamento recusado: %s", final.Valor.Motivo)
 	}
 	for _, id := range m.Participantes {
 		if _, ok := rs[id]; !ok {
@@ -198,7 +227,8 @@ func (d *Distribuido) cancelarGlobal(ctx context.Context, original metaTransacao
 	return nil
 }
 
-// cancelarOferta resolve as reservas distribuidas antes de alterar a carona do motorista.
+// cancelarOferta coordena cancelamentos distribuídos antes de alterar a oferta do motorista.
+// Recebe: sessão, ID e indicação de trecho ou carona.
 func (d *Distribuido) cancelarOferta(sessao, id string, trecho bool) (protocolo.Carona, error) {
 	d.g.mu.RLock()
 	u, err := d.g.autorizar(sessao, protocolo.Motorista)
@@ -255,44 +285,39 @@ func (d *Distribuido) cancelarOferta(sessao, id string, trecho bool) (protocolo.
 	return d.g.CancelarCarona(sessao, id)
 }
 
-// CancelarTrecho Protege o estado com Lock e impede cancelar depois do inicio da carona ou de um
-// itinerario ativo que utiliza o trecho. Se permitido, cancela o trecho e as reservas afetadas por
-// inteiro, devolve as vagas, registra os avisos e recalcula o status da carona.
-func (g *GrafoItinerarios) CancelarTrecho(sessaoID, id string) (protocolo.Carona, error) {
-	g.manutencao.Lock()
-	defer g.manutencao.Unlock()
+// ConsultarNotificacoes consulta os avisos pertencentes ao usuário autenticado.
+// Recebe: sessão do usuário.
+func (g *GrafoItinerarios) ConsultarNotificacoes(sessaoID string) ([]protocolo.Notificacao, error) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	u, err := g.autorizar(sessaoID, "")
+	if err != nil {
+		return nil, err
+	}
+	return append([]protocolo.Notificacao{}, g.notificacoes[u.Email]...), nil
+}
+
+// LerNotificacao marca um aviso como lido após validar sua propriedade.
+// Recebe: sessão do usuário e ID do aviso.
+func (g *GrafoItinerarios) LerNotificacao(sessaoID, id string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	u, err := g.autorizar(sessaoID, protocolo.Motorista)
+	u, err := g.autorizar(sessaoID, "")
 	if err != nil {
-		return protocolo.Carona{}, err
+		return err
 	}
-	estado, ok := g.trechos[id]
-	if !ok || estado.trecho.Motorista != u.Email {
-		return protocolo.Carona{}, fmt.Errorf("trecho não encontrado para este motorista")
-	}
-	t := estado.trecho
-	o := g.caronas[t.CaronaID]
-	if t.Status == protocolo.Cancelada {
-		return g.consultarCarona(t.CaronaID), nil
-	}
-	agora := g.agora()
-	if g.iniciou(o, agora) {
-		return protocolo.Carona{}, fmt.Errorf("não é possível cancelar trecho de carona já iniciada")
-	}
-	if err := g.validarCancelamento([]string{id}, agora); err != nil {
-		return protocolo.Carona{}, err
-	}
-	t.Status = protocolo.Cancelada
-	g.trechos[id].trecho = t
-	g.cancelarReservasDosTrechos([]string{id}, "Trecho "+t.Origem+" -> "+t.Destino+" cancelado pelo motorista; itinerário inteiro cancelado.")
-	/* Se restou um trecho ativo, a carona fica parcialmente cancelada. */
-	o.status = protocolo.Cancelada
-	for _, tid := range o.ids {
-		if g.trechos[tid].trecho.Status == protocolo.Ativa {
-			o.status = protocolo.Parcial
-			break
+	for i, n := range g.notificacoes[u.Email] {
+		if n.ID == id {
+			g.notificacoes[u.Email][i].Lida = true
+			return nil
 		}
 	}
-	return g.consultarCarona(t.CaronaID), nil
+	return fmt.Errorf("notificação não encontrada para este usuário")
+}
+
+// notificar registra um aviso de cancelamento para o passageiro da reserva.
+// Recebe: reserva e estado local g; exige trava de escrita.
+func (g *GrafoItinerarios) notificar(r protocolo.Reserva) {
+	n := protocolo.Notificacao{ID: g.novoID("N"), ReservaID: r.ID, Mensagem: r.Motivo, CriadaEm: g.agora().UTC().Format(time.RFC3339)}
+	g.notificacoes[r.Passageiro] = append(g.notificacoes[r.Passageiro], n)
 }

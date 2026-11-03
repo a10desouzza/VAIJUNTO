@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Define os contratos JSON de usuários, viagens, reservas e transações e valida os dados de entrada.
 package protocolo
 
 import (
@@ -189,10 +191,12 @@ type ReferenciaTrecho struct {
 	EmpresaID string `json:"empresa_id"`
 	TrechoID  string `json:"trecho_id"`
 }
+
 type ReservaDistribuida struct {
 	Chave   string             `json:"chave"`
 	Trechos []ReferenciaTrecho `json:"trechos"`
 }
+
 type EstadoTransacao string
 
 const (
@@ -209,6 +213,7 @@ type PedidoPreparacao struct {
 	Participantes    []string `json:"participantes"`
 	TrechosIDs       []string `json:"trechos_ids"`
 }
+
 type RespostaPreparacao struct {
 	TransacaoID string          `json:"transacao_id"`
 	EmpresaID   string          `json:"empresa_id"`
@@ -217,6 +222,8 @@ type RespostaPreparacao struct {
 	ReservaID   string          `json:"reserva_id,omitempty"`
 }
 
+// ValidarEmail valida tamanho, codificação e formato do e-mail, incluindo o domínio.
+// Recebe: e-mail digitado.
 func ValidarEmail(email string) error {
 	if len(email) > 254 || !utf8.ValidString(email) {
 		return fmt.Errorf("e-mail deve ter até 254 bytes")
@@ -246,6 +253,8 @@ func ValidarEmail(email string) error {
 	return nil
 }
 
+// ValidarNome valida tamanho e caracteres do nome, exigindo ao menos duas letras.
+// Recebe: nome digitado.
 func ValidarNome(nome string) error {
 	if !utf8.ValidString(nome) || len(nome) > 100 || utf8.RuneCountInString(nome) < 2 {
 		return fmt.Errorf("nome deve ter ao menos 2 caracteres e até 100 bytes")
@@ -266,6 +275,8 @@ func ValidarNome(nome string) error {
 	return nil
 }
 
+// ValidarSenha valida a entrada da senha, sem executar sua derivação criptográfica.
+// Recebe: senha digitada.
 func ValidarSenha(senha string) error {
 	if !utf8.ValidString(senha) || utf8.RuneCountInString(senha) < 8 || len(senha) > 128 || strings.TrimSpace(senha) == "" {
 		return fmt.Errorf("senha deve ter ao menos 8 caracteres e até 128 bytes")
@@ -278,6 +289,8 @@ func ValidarSenha(senha string) error {
 	return nil
 }
 
+// ValidarCidade valida preenchimento, tamanho e caracteres do nome da cidade.
+// Recebe: nome da cidade.
 func ValidarCidade(cidade string) error {
 	if !utf8.ValidString(cidade) || len(cidade) > 100 || strings.TrimSpace(cidade) == "" {
 		return fmt.Errorf("cidade deve ser preenchida e ter até 100 bytes")

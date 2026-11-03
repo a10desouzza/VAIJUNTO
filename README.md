@@ -173,18 +173,18 @@ Em um terminal Linux com o token definido, consulte as três empresas:
 ```bash
 curl --fail --show-error \
   -H "Authorization: Bearer $VAIJUNTO_TOKEN_CONSORCIO" \
-  http://192.168.1.10:8081/distribuido/saude
+  -H 'X-Lamport: 1' http://192.168.1.10:8081/distribuido/saude
 
 curl --fail --show-error \
   -H "Authorization: Bearer $VAIJUNTO_TOKEN_CONSORCIO" \
-  http://192.168.1.11:8081/distribuido/saude
+  -H 'X-Lamport: 1' http://192.168.1.11:8081/distribuido/saude
 
 curl --fail --show-error \
   -H "Authorization: Bearer $VAIJUNTO_TOKEN_CONSORCIO" \
-  http://192.168.1.12:8081/distribuido/saude
+  -H 'X-Lamport: 1' http://192.168.1.12:8081/distribuido/saude
 ```
 
-Cada resposta contém `empresa_id` e `geracao`. A geração identifica o histórico de coordenação da empresa e é preservada quando ela reinicia com seu backup íntegro.
+Cada resposta contém `empresa_id` e `geracao`, além do cabeçalho `X-Lamport`. A geração identifica o histórico de coordenação da empresa e é preservada quando ela reinicia com seu backup íntegro. O valor `1` acima serve para consultas manuais; as empresas mantêm e propagam seus próprios contadores automaticamente.
 
 Peça ao VaiJunto para consultar o consórcio:
 
@@ -307,7 +307,7 @@ Para retomar o mesmo processo:
 docker unpause minas
 ```
 
-Acompanhe os logs e consulte as reservas novamente. O ciclo de recuperação roda periodicamente; operações sem decisão iniciam recuperação após um intervalo de suspeita de aproximadamente 10 segundos. O tempo total depende dos prazos de rede e da disponibilidade de uma maioria.
+Acompanhe os logs e consulte as reservas novamente. O ciclo de recuperação roda periodicamente; operações sem decisão iniciam recuperação após um intervalo de suspeita de aproximadamente 10 segundos. O tempo total depende dos prazos de rede e da disponibilidade do coordenador da transação. Participantes preparados aguardam a decisão dele e não abortam sozinhos.
 
 Os testes automatizados injetam falhas nos pontos de preparação e decisão para verificar os cenários mais difíceis de reproduzir manualmente.
 
@@ -319,7 +319,7 @@ Cada empresa grava somente seu estado e seus registros de coordenação. No Dock
 
 Fora do Docker, o padrão é `dados/EMPRESA.json`. Use `-backup caminho/arquivo.json` ou `VAIJUNTO_BACKUP` para escolher outro arquivo. Uma execução com `-backup=` funciona apenas em RAM. Execute somente um processo por arquivo de backup.
 
-Depois de cada escrita, o servidor salva uma fotografia do estado. As etapas REST de preparação, promessa, aceitação e aplicação também são salvas antes da resposta de sucesso. O arquivo inclui vagas ocupadas e preparadas, chaves de repetição, reservas, notificações, relógio lógico e decisões. Sessões de login são temporárias e não são restauradas.
+Depois de cada escrita, o servidor salva uma fotografia do estado. As preparações são salvas antes de responder SIM; o coordenador salva a decisão antes de enviá-la; a aplicação é salva antes da resposta de sucesso. O arquivo inclui vagas ocupadas e preparadas, chaves de repetição, reservas, notificações, sequência local e decisões 2PC. Sessões de login são temporárias e não são restauradas.
 
 A gravação usa um arquivo temporário, sincronização com o disco e substituição do arquivo anterior. A abertura valida versão, empresa e checksum. A recuperação distribuída exige os mesmos participantes e token. Um arquivo inválido impede a inicialização e é preservado para análise; o servidor não começa vazio silenciosamente.
 
@@ -523,7 +523,7 @@ Consulte as reservas e as vagas novamente. Para falhas durante pontos específic
 
 ```bash
 go test ./...
-go test ./internal/servidor -run 'TestConsorcio|TestBackup|TestConsulta' -v -count=1 -timeout=120s
+go test ./internal/servidor -run 'TestConsorcio|TestBackup|TestConsulta|Test2PC|TestParticipante' -v -count=1 -timeout=20m
 go vet ./...
 ```
 
@@ -628,7 +628,7 @@ docker run --rm --name sao-paulo -v sao-paulo-dados:/dados `
 Em outro PowerShell, com o token definido:
 
 ```powershell
-$cabecalhos = @{ Authorization = "Bearer $env:VAIJUNTO_TOKEN_CONSORCIO" }
+$cabecalhos = @{ Authorization = "Bearer $env:VAIJUNTO_TOKEN_CONSORCIO"; 'X-Lamport' = '1' }
 Invoke-RestMethod 'http://192.168.1.10:8081/distribuido/saude' -Headers $cabecalhos
 Invoke-RestMethod 'http://192.168.1.11:8081/distribuido/saude' -Headers $cabecalhos
 Invoke-RestMethod 'http://192.168.1.12:8081/distribuido/saude' -Headers $cabecalhos
@@ -807,7 +807,7 @@ Consulte as reservas e as vagas novamente. Para falhas durante pontos específic
 
 ```powershell
 go test ./...
-go test ./internal/servidor -run 'TestConsorcio|TestBackup|TestConsulta' -v -count=1 -timeout=120s
+go test ./internal/servidor -run 'TestConsorcio|TestBackup|TestConsulta|Test2PC|TestParticipante' -v -count=1 -timeout=20m
 go vet ./...
 ```
 
@@ -847,7 +847,7 @@ go vet ./...
 Para os testes do consórcio, incluindo carga TCP e injeção de falhas:
 
 ```bash
-go test ./internal/servidor -run 'TestConsorcio|TestBackup|TestConsulta' -v -count=1 -timeout=120s
+go test ./internal/servidor -run 'TestConsorcio|TestBackup|TestConsulta|Test2PC|TestParticipante' -v -count=1 -timeout=20m
 ```
 
 Para executar com detector de corridas no Linux, tenha compilador C instalado e suporte CGO:
@@ -858,7 +858,7 @@ CGO_ENABLED=1 go test -race ./...
 
 Os testes usam portas locais escolhidas pelo sistema. Não precisam ocupar 8080 ou 8081 e não dependem dos servidores da apresentação em execução. O Dockerfile também executa o detector de corridas na construção da imagem.
 
-A suíte cobre busca entre empresas, disputa pela última vaga a partir de três origens, idempotência, cancelamento global, queda de comunicação, ausência de maioria e recuperação dos backups após recriar os três estados locais. A recuperação é verificada com transação preparada, decisão escolhida e reserva confirmada. Também cobre arquivo danificado e conexão ociosa sem bloquear a fila.
+A suíte cobre busca entre empresas, disputa pela última vaga a partir de três origens, idempotência, cancelamento global, queda de comunicação, espera segura pelo coordenador e recuperação dos backups após recriar os três estados locais. A recuperação é verificada com transação preparada, decisão gravada e reserva confirmada. Também cobre arquivo danificado e conexão ociosa sem bloquear a fila.
 
 ## Arquitetura e organização do código
 
@@ -879,7 +879,7 @@ A suíte cobre busca entre empresas, disputa pela última vaga a partir de três
 | `internal/servidor/transacoes.go` | Preparação, confirmação e aborto locais |
 | `internal/servidor/distribuido.go` | Tipos de coordenação, aplicação e recuperação |
 | `internal/servidor/rest_consorcio.go` | Chamadas REST entre empresas |
-| `internal/servidor/consenso.go` | Promessas, cédulas e decisão por maioria |
+| `internal/servidor/coordenador.go` | Decisão persistida do 2PC e recuperação do coordenador e participantes |
 | `internal/servidor/itinerario_distribuido.go` | Busca e confirmação de itinerários entre empresas |
 | `internal/servidor/participantes.go` | Validação das preparações e aplicação de decisões certificadas |
 | `internal/servidor/gestao_reservas.go` | Consulta, atualização e cancelamento das reservas distribuídas |
@@ -890,9 +890,9 @@ O TCP possui duas filas, com até 128 mensagens de leitura e 128 de escrita, e u
 
 Os trechos têm travas próprias, adquiridas em ordem de ID. A confirmação local verifica os trechos antes de registrar a reserva. A preparação distribuída distingue assentos preparados de confirmados; confirmar não desconta a mesma vaga novamente.
 
-As empresas são preparadas em ordem consistente e conflitos remotos são recusados sem espera por outros assentos. A precedência sobre uma vaga é a ordem de admissão no servidor dono, registrada por contador local; não é uma promessa de ordem global de envio das mensagens.
+As empresas são preparadas em ordem consistente e conflitos remotos são recusados sem espera por outros assentos. A precedência sobre uma vaga é a ordem de admissão no servidor dono, registrada por marca de Lamport local; não é uma promessa de ordem global de envio das mensagens. O contador avança em eventos/envios e usa `max(local, recebido)+1` nas recepções. As mensagens REST de coordenação carregam `X-Lamport`, e a transação registra sua marca inicial nos metadados. A recuperação ordena operações por marca lógica, origem e ID, sem comparar relógios físicos de computadores diferentes.
 
-A decisão conjunta usa consenso de valor único por transação, implementado no código: cédulas com contador lógico e identificador da empresa, promessas, aceitação por maioria e certificados. O proponente é escolhido por operação, sem servidor central fixo.
+A confirmação usa Commit em Duas Fases (2PC) com relógio de Lamport, implementados pelo projeto. A origem da reserva coordena aquela transação: prepara os donos, grava CONFIRMAR se todos responderem SIM ou ABORTAR em caso de recusa, e envia o resultado. Não existe coordenador fixo entre as empresas nem decisão por votação. Lamport ordena os eventos, as travas protegem assentos e o 2PC organiza a decisão conjunta. Um participante preparado aguarda o coordenador após uma queda; não libera vagas por timeout.
 
 A especificação das requisições, respostas, códigos HTTP e sequência das mensagens está em [internal/consorcio/API.md](internal/consorcio/API.md). O contrato TCP está em [internal/protocolo/PROTOCOLO.md](internal/protocolo/PROTOCOLO.md).
 
@@ -902,11 +902,11 @@ A especificação das requisições, respostas, códigos HTTP e sequência das m
 - As referências de trechos incluem a empresa, evitando confundir IDs locais iguais.
 - Pedidos repetidos não duplicam reservas nem devolvem vagas mais de uma vez.
 - Timeout indica resultado desconhecido; ele não autoriza liberar uma preparação sozinho.
-- Uma decisão distribuída exige uma maioria de duas das três testemunhas.
+- CONFIRMAR exige a preparação de todos os donos; uma terceira empresa sem trechos não impede essa decisão.
 - A confirmação ao passageiro depende da aplicação em todos os donos dos trechos.
 - Reservas inteiramente locais continuam independentes das outras empresas.
-- Sem maioria, operações distribuídas podem permanecer pendentes para preservar consistência.
-- Um processo reiniciado com backup íntegro recupera seus dados, sua geração e as promessas de voto.
+- Com o coordenador indisponível, participantes preparados permanecem pendentes até obter a decisão registrada ou até ele voltar e recuperar a transação.
+- Um processo reiniciado com backup íntegro recupera seus dados, sua geração, seu relógio de Lamport, as preparações e as decisões 2PC.
 - Sem backup, uma geração nova não volta a votar em transações da geração perdida.
 - Os backups são locais e não replicam as bases das empresas. Perder o arquivo ou o disco da empresa impede essa recuperação.
 
@@ -924,7 +924,7 @@ Salvar uma fotografia completa a cada escrita simplifica a recuperação e acres
 | Empresa aparece indisponível | Identificador em `-pares`, token e API REST da empresa |
 | Cliente não conecta | Use a porta TCP; em contêiner de cliente, informe o IP do computador servidor |
 | Itinerário não aparece | Cidades, data, conexões de horário, vagas e disponibilidade das empresas |
-| Reserva aparece pendente | Consulte novamente; confira se há maioria e se os donos dos trechos estão respondendo |
+| Reserva aparece pendente | Consulte novamente; confira se o coordenador da reserva e os donos dos trechos estão respondendo |
 | Senha recusada | De 8 a 128 caracteres e cadastro na empresa correta |
 | Estado sumiu após reiniciar | Mesmo volume ou caminho do backup, identidade e token; sem o arquivo não há restauração |
 
@@ -955,7 +955,7 @@ Depois de atualizar o codigo, reconstrua a imagem com
 
 ### Estrutura simplificada e conferência do barema
 
-São 34 arquivos Go, incluindo 9 arquivos de testes; cada arquivo tem menos de 300 linhas físicas. A suíte contém 50 funções de teste, além dos subtestes. A redução eliminou documentação mecânica e cenários sobrepostos, preservando os testes distribuídos de disputa, falhas e recuperação. Não houve troca do protocolo de coordenação por biblioteca ou serviço externo.
+São 34 arquivos Go, incluindo 9 arquivos de testes; cada arquivo tem menos de 300 linhas físicas. A suíte contém 56 funções de teste, além dos subtestes. A redução eliminou documentação mecânica e cenários sobrepostos, preservando os testes distribuídos de disputa, falhas e recuperação. Não houve troca do protocolo de coordenação por biblioteca ou serviço externo.
 
 | Item do barema | Implementação e demonstração |
 |---|---|
@@ -963,11 +963,11 @@ São 34 arquivos Go, incluindo 9 arquivos de testes; cada arquivo tem menos de 3
 | 2. REST | `consorcio/rest.go` e `rest_consorcio.go`; métodos, JSON, códigos e repetição em `internal/consorcio/API.md`. Clientes continuam usando sockets TCP nativos e NDJSON. |
 | 3. Busca distribuída | Consulta paralela em tempo real aos catálogos; retorna empresas indisponíveis, sem copiar suas bases para armazenamento local. |
 | 4. Exclusão mútua | Cada dono protege seus trechos com mutexes e distingue vagas preparadas de ocupadas; disputa por três origens em `distribuido_test.go`. |
-| 5. Atomicidade | Preparações nos donos, decisão por maioria e certificado; só apresenta reserva ativa após aplicação em todos os donos. Diagrama de sequência em `internal/consorcio/API.md`. |
-| 6. Precedência | Ordem de admissão no dono da vaga, sob trava, registrada por contador local. Não depende de relógios físicos sincronizados; não garante prioridade por horário global de envio. |
+| 5. Atomicidade | Preparações nos donos, decisão 2PC gravada pelo coordenador antes do envio; só apresenta reserva ativa após aplicação em todos os donos. Diagrama de sequência em `internal/consorcio/API.md`. |
+| 6. Precedência | Relógio de Lamport nas mensagens, metadados e registros de preparação; recuperação por `(Lamport, origem, ID)`. A admissão da vaga permanece sob trava no dono; não promete prioridade global a mensagens atrasadas. |
 | 7. Deadlock | Travas locais e participantes em ordem consistente; preparação conflitante é recusada sem esperar outra vaga. Reduz espera circular, mas pode exigir nova tentativa. |
-| 8. Falhas | Timeouts não encerram os pares nem liberam vagas sozinhos. Reservas locais continuam; decisões distribuídas precisam de maioria e dos donos disponíveis para concluir a aplicação. |
-| 9. Recuperação | `backup.go`: arquivo privado, checksum, sincronização e substituição por temporário; preserva preparações, promessas, decisões e geração. Testes recriam servidores após preparação, escolha e confirmação. |
+| 8. Falhas | Timeouts não encerram os pares nem liberam vagas sozinhos. Reservas locais continuam; decisões 2PC dependem do coordenador da transação e dos donos disponíveis para concluir a aplicação. Participantes não assumem a decisão durante sua queda. |
+| 9. Recuperação | `backup.go`: arquivo privado, checksum, sincronização e substituição por temporário; preserva preparações, decisões e geração. Testes recriam servidores após preparação, escolha e confirmação. |
 | 10. Testes | `regras_test.go`, `transacoes_test.go`, `tcp_test.go`, `distribuido_test.go`, `falhas_distribuidas_test.go`, `backup_test.go`, `seguranca_test.go` e `testes/{sistema,interfaces}_test.go`. |
 | 11. Emulação | Dockerfile executa testes com detector de corridas e `go vet`; roteiro principal usa computadores distintos e um volume privado por empresa. A topologia real precisa ser validada no laboratório. |
 
@@ -977,4 +977,16 @@ Para verificar no ambiente Docker, execute `docker build -t vaijunto:local .`. O
 
 A derivação de senha usa a biblioteca padrão de criptografia, sem delegar nenhum mecanismo de coordenação distribuída. O custo PBKDF2-SHA256 segue a referência [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
 
-Validação desta simplificação: `go test ./...`, `go vet ./...` e `go build ./...` passaram. São 50 funções de teste (subtestes não entram nessa contagem); o pacote interno do servidor concluiu em 141,825 s, e os testes públicos passaram usando o cache válido do Go. O hash de senha acrescenta custo de CPU ao cadastro e login. O detector de corridas não foi executado neste Windows porque CGO está desativado e não há compilador C disponível. Docker não está disponível nesta máquina; o build e a topologia em computadores distintos continuam pendentes de execução no laboratório. Esses resultados não equivalem a uma medição de desempenho da rede do laboratório.
+Validação da versão 2PC com Lamport: `go test ./... -count=1 -timeout=10m`, `go vet ./...` e `go build ./...` passaram. São 56 funções de teste; o pacote do servidor levou 159,904 s e os testes públicos 20,436 s nesta máquina. A execução no Docker mantém `go test -race -p 1 -timeout 20m -v ./...`, seguido de `go vet`. Os testes incluem disputa entre origens, coordenador interrompido antes/depois da decisão, recuperação dos três servidores, repetição da fase 2, falha de gravação, independência de um terceiro sem trechos, avanço concorrente de Lamport, propagação REST com relógios físicos diferentes e preservação do contador no reinício. Docker e detector de corridas precisam ser executados no ambiente Linux do laboratório; não estão disponíveis neste Windows.
+
+### Fluxo para explicar na apresentação
+
+1. O passageiro acessa sua empresa por TCP; ela é coordenadora da reserva.
+2. A busca consulta catálogos REST em tempo real, informando empresas indisponíveis.
+   Nas mensagens REST de coordenação, cada envio avança Lamport e cada recepção usa `max(local, recebido)+1`; o backup preserva o contador. Lamport ordena eventos e não substitui o calendário das partidas nem a medição local de timeouts.
+3. Os donos são preparados em ordem de ID. Travas locais impedem reservar a mesma vaga para dois pedidos.
+4. Todos SIM: o coordenador grava CONFIRMAR. Recusa ou falha antes de decidir: grava ABORTAR.
+5. O coordenador envia a decisão por REST; cada dono a aplica uma vez e salva.
+6. Sem resposta do coordenador, um participante preparado espera. Ao voltar, o coordenador reenvia sua decisão ou aborta a operação que ainda não tinha decisão registrada.
+
+O backup local v2 preserva preparações, decisões e o contador de Lamport. Arquivos v2 anteriores à inclusão de Lamport continuam legíveis, iniciando o contador ausente em zero. Históricos de outro protocolo não são convertidos. O backup continua necessário para demonstrar queda e reinício mantendo as decisões.

@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Controla a escolha da empresa, a sessão, os menus e o reenvio de solicitações do cliente.
 package cliente
 
 import (
@@ -14,26 +16,25 @@ import (
 )
 
 type menu struct {
-	leitor   *bufio.Scanner // ler entrada do usuario
-	saida    io.Writer      // escrever saida para o usuario
-	endereco string         // endereco do servidor
-	perfil   string         // perfil do usuario (motorista ou passageiro)
-	sessaoID string         // id da sessao do usuario apos login
-	err      error          // erro de leitura ou interrupcao do usuario
-
-	nome    string // nome do usuario logado, para apresentar no menu
-	empresa string
+	leitor   *bufio.Scanner
+	saida    io.Writer
+	endereco string
+	perfil   string
+	sessaoID string
+	err      error
+	nome     string
+	empresa  string
 }
 
-// ExecutarMenu mantem o fluxo de login e operacoes. Entrada e saida sao parametros para permitir
-// testes.
+// ExecutarMenu mantem o fluxo de login e operacoes. Entrada e saida sao parametros para permitir testes.
+// Recebe: endereço, perfil e canais de entrada/saída.
 func ExecutarMenu(endereco, perfil string, entrada io.Reader, saida io.Writer) error {
 	m := &menu{leitor: bufio.NewScanner(entrada), saida: saida, endereco: endereco, perfil: perfil}
 	return m.executar()
 }
 
-// ExecutarComSelecao usa o mesmo leitor durante a escolha da empresa e o login.
-// Assim nenhuma linha ja lida pelo buffer se perde ao mudar de tela.
+// ExecutarComSelecao usa o mesmo leitor durante a escolha da empresa e o login. Assim nenhuma linha ja lida pelo buffer se perde ao mudar de tela.
+// Recebe: empresas disponíveis, perfil e entrada/saída.
 func ExecutarComSelecao(empresas []configuracao.ServidorCliente, perfil string, entrada io.Reader, saida io.Writer) error {
 	if len(empresas) == 0 {
 		return fmt.Errorf("nenhuma empresa configurada")
@@ -71,6 +72,7 @@ func ExecutarComSelecao(empresas []configuracao.ServidorCliente, perfil string, 
 }
 
 // executar mantem a sessao e as operacoes na empresa escolhida ate sair do cliente.
+// Recebe: estado do menu m, sem argumentos explícitos.
 func (m *menu) executar() error {
 	if err := configuracao.ValidarEnderecoCliente(m.endereco); err != nil {
 		return err
@@ -81,7 +83,7 @@ func (m *menu) executar() error {
 	}
 	fmt.Fprintf(m.saida, "  Perfil: %s  |  Servidor: %s\n", m.perfil, m.endereco)
 	fmt.Fprintln(m.saida, "  Digite /voltar em qualquer formulário para retornar ao menu.")
-	// garante que o logout seja enviado ao servidor quando o menu for encerrado
+
 	defer func() {
 		if m.sessaoID != "" {
 			EnviarRequisicao(m.endereco, protocolo.Requisicao{Acao: protocolo.AcaoSair, SessaoID: m.sessaoID, Dados: json.RawMessage(`{}`)})
@@ -106,7 +108,7 @@ func (m *menu) executar() error {
 				err = m.cadastrar()
 			}
 		} else {
-			// Se for passageiro, o menu tenta buscar notificações antes de mostrar as opções
+
 			if m.perfil == protocolo.Passageiro {
 				if err := m.notificacoes(false); err != nil {
 					fmt.Fprintln(m.saida, "Não foi possível verificar notificações:", err)
@@ -149,6 +151,7 @@ func (m *menu) executar() error {
 }
 
 // executarOpcao recebe a opcao escolhida e usa o perfil guardado no menu para chamar a operacao.
+// Recebe: opção escolhida e perfil guardado em m.
 func (m *menu) executarOpcao(opcao int) error {
 	if opcao == 4 {
 		err := m.enviar(protocolo.AcaoSair, struct{}{}, nil)
@@ -185,11 +188,10 @@ func (m *menu) executarOpcao(opcao int) error {
 	return nil
 }
 
-// enviar Monta o envelope uma vez e preserva os dados nas tentativas. Em falha de transporte
-// permite ao usuario reenviar o mesmo pedido, preservando a chave de publicacao/reserva. Invalida
-// a sessao local ao receber erro de sessao expirada e converte os dados para alvo.
+// enviar Monta o envelope uma vez e preserva os dados nas tentativas. Em falha de transporte permite ao usuario reenviar o mesmo pedido, preservando a chave de publicacao/reserva. Invalida a sessao local ao receber erro de sessao expirada e converte os dados para alvo.
+// Recebe: ação, dados e ponteiro alvo, usando a sessão de m.
 func (m *menu) enviar(acao string, dados, alvo any) error {
-	/* /voltar e EOF interrompem antes de qualquer envio deste formulario. */
+
 	if m.err != nil {
 		return m.err
 	}
@@ -197,7 +199,7 @@ func (m *menu) enviar(acao string, dados, alvo any) error {
 	if err != nil {
 		return err
 	}
-	/* Montamos uma vez, fora das tentativas: o reenvio preserva dados e chave da operacao. */
+
 	req := protocolo.Requisicao{Acao: acao, SessaoID: m.sessaoID, Dados: raw}
 	for {
 		resp, err := EnviarRequisicao(m.endereco, req)
@@ -226,8 +228,8 @@ func (m *menu) enviar(acao string, dados, alvo any) error {
 	}
 }
 
-// cadastrar le os dados, confirma a senha, cria a conta e guarda a sessao devolvida pelo
-// servidor.
+// cadastrar le os dados, confirma a senha, cria a conta e guarda a sessao devolvida pelo servidor.
+// Recebe: estado e entrada do menu m.
 func (m *menu) cadastrar() error {
 	m.cabecalho("Cadastro", "")
 	p := protocolo.Cadastro{Nome: m.campo("Nome", func(s string) string {
@@ -254,14 +256,14 @@ func (m *menu) cadastrar() error {
 	return nil
 }
 
-// notificacoes Consulta os avisos do usuario, mostra cada aviso selecionado e so depois envia a
-// confirmacao de leitura dos novos. Se essa confirmacao falhar, o aviso pode aparecer novamente.
+// notificacoes Consulta os avisos do usuario, mostra cada aviso selecionado e so depois envia a confirmacao de leitura dos novos. Se essa confirmacao falhar, o aviso pode aparecer novamente.
+// Recebe: indicação de mostrar todos os avisos e menu m.
 func (m *menu) notificacoes(todas bool) error {
 	resp, err := EnviarRequisicao(m.endereco, protocolo.Requisicao{Acao: protocolo.AcaoNotificacoes, SessaoID: m.sessaoID, Dados: json.RawMessage(`{}`)})
 	if err != nil {
 		return err
 	}
-	// se servidor respondeu algo diferente de sucesso, sessao pode ter ficado inativa
+
 	if resp.Status != protocolo.Sucesso {
 		m.sessaoID = ""
 		return fmt.Errorf("%s", resp.Mensagem)
@@ -282,7 +284,7 @@ func (m *menu) notificacoes(todas bool) error {
 			continue
 		}
 		fmt.Fprintf(m.saida, "\nAviso da reserva %s (%s):\n%s\n", aviso.ReservaID, horarioLegivel(aviso.CriadaEm), aviso.Mensagem)
-		/* Confirma a leitura somente depois de mostrar o aviso no terminal. */
+
 		if !aviso.Lida {
 			raw, _ := json.Marshal(protocolo.Identificador{ID: aviso.ID})
 			confirmacao, err := EnviarRequisicao(m.endereco, protocolo.Requisicao{Acao: protocolo.AcaoLerNotificacao, SessaoID: m.sessaoID, Dados: raw})

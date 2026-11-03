@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Valida pedidos e decisões do 2PC e solicita a preparação e a aplicação idempotente dos efeitos locais.
 package servidor
 
 import (
@@ -9,7 +11,8 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-// validarMeta confere participantes e a geracao que pode continuar esta transacao.
+// validarMeta confere participantes, origem e a geracao do estado local.
+// Recebe: metadados e identidade local d.
 func (d *Distribuido) validarMeta(m metaTransacao) error {
 	if m.ID == "" || len(m.ID) > 128 || (m.Tipo != "RESERVAR" && m.Tipo != "CANCELAR") || !contem(d.membros, m.Origem) {
 		return fmt.Errorf("metadados inválidos")
@@ -37,6 +40,7 @@ func (d *Distribuido) validarMeta(m metaTransacao) error {
 }
 
 // validarDecisao exige o recibo de todos os donos antes de aceitar uma confirmacao.
+// Recebe: metadados e decisão proposta.
 func (d *Distribuido) validarDecisao(m metaTransacao, v decisao) error {
 	if v.Estado == "ABORTAR" {
 		return nil
@@ -53,6 +57,7 @@ func (d *Distribuido) validarDecisao(m metaTransacao, v decisao) error {
 }
 
 // preparar registra a operacao e separa somente os assentos da empresa local.
+// Recebe: metadados e pedido da parte local.
 func (d *Distribuido) preparar(p prepararRPC) (resultadoRPC, error) {
 	if err := d.validarMeta(p.Meta); err != nil {
 		return resultadoRPC{}, err
@@ -68,7 +73,7 @@ func (d *Distribuido) preparar(p prepararRPC) (resultadoRPC, error) {
 	d.mu.Lock()
 	r := d.registros[p.Meta.ID]
 	if r == nil {
-		r = &registroConsenso{Meta: p.Meta, Criado: time.Now()}
+		r = &registroTransacao{Meta: p.Meta, Criado: time.Now()}
 		d.registros[p.Meta.ID] = r
 	}
 	if hashJSON(r.Meta) != hashJSON(p.Meta) || r.Final != nil {
@@ -98,6 +103,7 @@ func (d *Distribuido) preparar(p prepararRPC) (resultadoRPC, error) {
 }
 
 // resultadoLocal obtem uma copia da reserva local associada a transacao, se ela existir.
+// Recebe: ID da transação local.
 func (d *Distribuido) resultadoLocal(id string) resultadoRPC {
 	d.g.mu.RLock()
 	defer d.g.mu.RUnlock()
@@ -108,29 +114,24 @@ func (d *Distribuido) resultadoLocal(id string) resultadoRPC {
 	return resultadoRPC{Reserva: copiarReserva(d.g.reservas[t.reservaID])}
 }
 
-// finalizar valida o certificado e aplica a decisao uma unica vez.
-func (d *Distribuido) finalizar(c certificado) (resultadoRPC, error) {
+// finalizar aplica a decisao autenticada do coordenador uma unica vez.
+// Recebe: decisão final autenticada.
+func (d *Distribuido) finalizar(c decisaoFinal) (resultadoRPC, error) {
 	if err := d.validarMeta(c.Meta); err != nil {
 		return resultadoRPC{}, err
 	}
 	if err := d.validarDecisao(c.Meta, c.Valor); err != nil {
 		return resultadoRPC{}, err
 	}
-	quantidade := 0
-	for id, v := range c.Votos {
-		if contem(d.membros, id) && c.Meta.Geracoes[id] != "" && hmac.Equal([]byte(v), []byte(d.voto(c.Meta, c.Cedula, c.Valor, id))) {
-			quantidade++
-		}
-	}
-	if quantidade < 2 {
-		return resultadoRPC{}, fmt.Errorf("certificado sem maioria")
+	if !hmac.Equal([]byte(c.Assinatura), []byte(d.assinar([]any{c.Meta, c.Valor}))) {
+		return resultadoRPC{}, fmt.Errorf("decisao sem autenticacao do coordenador")
 	}
 	liberar := travarOperacao(&d.locais, c.Meta.ID)
 	defer liberar()
 	d.mu.Lock()
 	r := d.registros[c.Meta.ID]
 	if r == nil {
-		r = &registroConsenso{Meta: c.Meta, Criado: time.Now()}
+		r = &registroTransacao{Meta: c.Meta, Criado: time.Now()}
 		d.registros[c.Meta.ID] = r
 	}
 	if hashJSON(r.Meta) != hashJSON(c.Meta) || r.Final != nil && hashJSON(r.Final.Valor) != hashJSON(c.Valor) {

@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Testa indisponibilidade, interrupções e recuperação segura das operações distribuídas.
 package servidor
 
 import (
@@ -12,6 +14,8 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
+// TestCancelamentoMotoristaDoisRespeitaInicioDoItinerario verifica proteção das conexões após o início do itinerário do passageiro.
+// Recebe: controle de teste t.
 func TestCancelamentoMotoristaDoisRespeitaInicioDoItinerario(t *testing.T) {
 	for _, tipo := range []string{"trecho", "carona"} {
 		for _, deslocamento := range []time.Duration{-time.Second, 0, time.Second} {
@@ -71,6 +75,8 @@ func TestCancelamentoMotoristaDoisRespeitaInicioDoItinerario(t *testing.T) {
 	}
 }
 
+// TestConsultaMantemReservaComEmpresaIndisponivel verifica que indisponibilidade é informada sem apagar a reserva existente.
+// Recebe: controle de teste t.
 func TestConsultaMantemReservaComEmpresaIndisponivel(t *testing.T) {
 	empresas := criarConsorcio(t, 1)
 	a := empresas[0]
@@ -85,6 +91,8 @@ func TestConsultaMantemReservaComEmpresaIndisponivel(t *testing.T) {
 	}
 }
 
+// TestConsorcioReservaLocalIndependeDosOutrosServidores verifica reserva inteiramente local com os pares indisponíveis.
+// Recebe: controle de teste t.
 func TestConsorcioReservaLocalIndependeDosOutrosServidores(t *testing.T) {
 	es := criarConsorcio(t, 1)
 	a := es[0]
@@ -96,10 +104,12 @@ func TestConsorcioReservaLocalIndependeDosOutrosServidores(t *testing.T) {
 		t.Fatalf("reserva local dependeu dos pares: %+v %v", r, err)
 	}
 	if len(a.d.registros) != 0 {
-		t.Fatal("reserva local criou consenso desnecessário")
+		t.Fatal("reserva local criou 2PC desnecessario")
 	}
 }
 
+// TestConsorcioRecuperaQuedaAntesEDepoisDaEscolha verifica recuperação antes e depois da decisão final do coordenador.
+// Recebe: controle de teste t.
 func TestConsorcioRecuperaQuedaAntesEDepoisDaEscolha(t *testing.T) {
 	for _, escolhida := range []bool{false, true} {
 		t.Run(fmt.Sprint(escolhida), func(t *testing.T) {
@@ -110,7 +120,7 @@ func TestConsorcioRecuperaQuedaAntesEDepoisDaEscolha(t *testing.T) {
 				return fmt.Errorf("coordenador interrompido")
 			}
 			if escolhida {
-				a.d.aposQuorum = falhar
+				a.d.aposDecidir = falhar
 			} else {
 				a.d.aposPreparar = falhar
 			}
@@ -123,14 +133,15 @@ func TestConsorcioRecuperaQuedaAntesEDepoisDaEscolha(t *testing.T) {
 				s := e.g.trechos[e.carona.Trechos[0].Trecho.ID]
 				n := len(s.preparados)
 				e.g.mu.RUnlock()
-				if n != 0 {
-					t.Fatal("vagas continuaram preparadas no servidor sobrevivente")
+				if n != 1 {
+					t.Fatal("participante decidiu sem consultar o coordenador indisponivel")
 				}
 			}
 			a.offline.Store(false)
 			b.d.recuperar(context.Background())
-			a.d.aposQuorum = nil
+			a.d.aposDecidir = nil
 			a.d.aposPreparar = nil
+			a.d.abortarApos = 0
 			a.d.recuperar(context.Background())
 			if escolhida {
 				verificarVagas(t, es, 0, 1, 0)
@@ -141,25 +152,25 @@ func TestConsorcioRecuperaQuedaAntesEDepoisDaEscolha(t *testing.T) {
 	}
 }
 
-func TestConsorcioNaoLiberaPreparacaoSemMaioria(t *testing.T) {
+// TestParticipanteNaoAbortaSemDecisaoDoCoordenador verifica que o participante mantém a preparação enquanto desconhece a decisão.
+// Recebe: controle de teste t.
+func TestParticipanteNaoAbortaSemDecisaoDoCoordenador(t *testing.T) {
 	es := criarConsorcio(t, 1)
-	a := es[0]
-	a.d.aposPreparar = func() error {
-		return fmt.Errorf("interrompido")
-	}
-	_, _ = a.d.reservar(a.passageiro, pedidoTeste(es, "sem-maioria"))
-	es[1].offline.Store(true)
-	es[2].offline.Store(true)
-	a.d.abortarApos = 0
-	a.d.recuperar(context.Background())
+	a, b := es[0], es[1]
+	a.d.aposPreparar = func() error { return fmt.Errorf("interrompido antes de decidir") }
+	_, _ = a.d.reservar(a.passageiro, pedidoTeste(es, "sem-decisao"))
+	b.d.abortarApos = 0
+	b.d.recuperar(context.Background())
 	verificarVagas(t, es, 0, 0, 1)
-	es[1].offline.Store(false)
-	es[2].offline.Store(false)
+	a.d.aposPreparar = nil
+	a.d.abortarApos = 0
 	a.d.recuperar(context.Background())
 	verificarVagas(t, es, 1, 0, 0)
 }
 
-func TestConsorcioProcessoNovoRecusaVotosDaGeracaoPerdida(t *testing.T) {
+// TestConsorcioProcessoNovoRecusaTransacaoDaGeracaoPerdida verifica recusa de mensagens ligadas a um histórico local perdido.
+// Recebe: controle de teste t.
+func TestConsorcioProcessoNovoRecusaTransacaoDaGeracaoPerdida(t *testing.T) {
 	es := criarConsorcio(t, 1)
 	a := es[0]
 	a.d.aposPreparar = func() error {
@@ -178,11 +189,13 @@ func TestConsorcioProcessoNovoRecusaVotosDaGeracaoPerdida(t *testing.T) {
 	defer func() {
 		a.d.geracao = antiga
 	}()
-	if _, err := a.d.consenso("prometer", mensagemConsenso{Meta: meta, Cedula: cedula{100, a.d.id}}); err == nil {
-		t.Fatal("processo reiniciado votou em transacao da geracao anterior")
+	if err := a.d.validarMeta(meta); err == nil {
+		t.Fatal("processo sem historico aceitou transacao da geracao anterior")
 	}
 }
 
+// TestCargaComQuedaERecuperacao verifica integridade durante disputa, queda, reinício e reutilização segura das vagas.
+// Recebe: controle de teste t.
 func TestCargaComQuedaERecuperacao(t *testing.T) {
 	empresas := criarConsorcio(t, 2)
 	donos := empresas[:2]
@@ -250,5 +263,38 @@ func TestCargaComQuedaERecuperacao(t *testing.T) {
 		if anterior.TransacaoID == nova.TransacaoID || contagem[anterior.TransacaoID] != 1 || contagem[nova.TransacaoID] != 1 {
 			t.Fatalf("%s: ocupações por transação após recuperação: %v", e.d.id, contagem)
 		}
+	}
+}
+
+// Test2PCIndependeDaEmpresaSemTrechos verifica que uma terceira empresa não envolvida não bloqueia a reserva.
+// Recebe: controle de teste t.
+func Test2PCIndependeDaEmpresaSemTrechos(t *testing.T) {
+	es := criarConsorcio(t, 1)
+	es[2].offline.Store(true)
+	r, err := es[0].d.reservar(es[0].passageiro, pedidoTeste(es[:2], "sem-terceiro"))
+	if err != nil || r.Status != protocolo.Ativa {
+		t.Fatalf("terceiro sem trechos bloqueou 2PC: %+v %v", r, err)
+	}
+	verificarVagas(t, es[:2], 0, 1, 0)
+	verificarVagas(t, es[2:], 1, 0, 0)
+}
+
+// Test2PCReenviaConfirmacaoAposRespostaPerdida verifica reenvio da confirmação e conclusão da aplicação pendente.
+// Recebe: controle de teste t.
+func Test2PCReenviaConfirmacaoAposRespostaPerdida(t *testing.T) {
+	es := criarConsorcio(t, 1)
+	a := es[0]
+	a.d.aposDecidir = func() error { es[1].offline.Store(true); return nil }
+	r, err := a.d.reservar(a.passageiro, pedidoTeste(es, "fase2"))
+	if err != nil || r.Status != pendente {
+		t.Fatalf("resultado deve aguardar aplicacao: %+v %v", r, err)
+	}
+	verificarVagas(t, es[1:2], 0, 0, 1)
+	verificarVagas(t, es[:1], 0, 1, 0)
+	es[1].offline.Store(false)
+	a.d.recuperar(context.Background())
+	verificarVagas(t, es, 0, 1, 0)
+	if a.d.reservaOrigem(r.ID).Status != protocolo.Ativa {
+		t.Fatal("confirmacao nao recuperada")
 	}
 }

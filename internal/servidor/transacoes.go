@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Separa, confirma e libera assentos locais do 2PC e impede cancelamentos incompatíveis com transações.
 package servidor
 
 import (
@@ -9,7 +11,6 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-// transacaoLocal guarda os assentos separados e o estado da operacao local.
 type transacaoLocal struct {
 	pedido    protocolo.PedidoPreparacao
 	estado    protocolo.EstadoTransacao
@@ -19,8 +20,8 @@ type transacaoLocal struct {
 	ordem     uint64
 }
 
-// confirmarTransacao aplica uma decisao recebida do protocolo, sem descontar
-// novamente as vagas. Um passageiro externo nunca vira uma conta local.
+// confirmarTransacao aplica uma decisao recebida do protocolo, sem descontar novamente as vagas. Um passageiro externo nunca vira uma conta local.
+// Recebe: ID de uma transação local preparada.
 func (g *GrafoItinerarios) confirmarTransacao(id string) (protocolo.Reserva, error) {
 	g.manutencao.RLock()
 	defer g.manutencao.RUnlock()
@@ -70,6 +71,7 @@ func (g *GrafoItinerarios) confirmarTransacao(id string) (protocolo.Reserva, err
 }
 
 // cancelarTransacaoConfirmada localiza a transacao confirmada e devolve seus assentos sob exclusao de manutencao; somente o protocolo deve autorizar essa aplicacao.
+// Recebe: ID original e motivo, após autorização do 2PC.
 func (g *GrafoItinerarios) cancelarTransacaoConfirmada(id, motivo string) (protocolo.Reserva, error) {
 	g.manutencao.Lock()
 	defer g.manutencao.Unlock()
@@ -82,8 +84,8 @@ func (g *GrafoItinerarios) cancelarTransacaoConfirmada(id, motivo string) (proto
 	return g.cancelarReserva(t.reservaID, motivo), nil
 }
 
-// prepararTransacao escolhe todos os assentos antes de descontar vagas.
-// Pedidos repetidos retornam o estado registrado sem separar novas vagas.
+// prepararTransacao escolhe todos os assentos antes de descontar vagas. Pedidos repetidos retornam o estado registrado sem separar novas vagas.
+// Recebe: pedido com IDs locais e identificação da transação.
 func (g *GrafoItinerarios) prepararTransacao(
 	pedido protocolo.PedidoPreparacao,
 ) (protocolo.RespostaPreparacao, error) {
@@ -101,7 +103,10 @@ func (g *GrafoItinerarios) prepararTransacao(
 
 	liberar := travarTrechos(estados)
 	defer liberar()
-
+	var ordem uint64
+	if g.distribuido != nil {
+		ordem = g.distribuido.evento(0)
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -118,8 +123,10 @@ func (g *GrafoItinerarios) prepararTransacao(
 			ReservaID:   anterior.reservaID,
 		}, nil
 	}
-
 	assentos := make(map[string]int)
+	if ordem == 0 {
+		ordem = g.sequencia + 1
+	}
 	agora := g.agora()
 
 	for _, id := range pedido.TrechosIDs {
@@ -168,7 +175,7 @@ func (g *GrafoItinerarios) prepararTransacao(
 		pedido:   pedido,
 		estado:   protocolo.TransacaoPreparada,
 		assentos: assentos,
-		ordem:    g.sequencia + 1,
+		ordem:    ordem,
 	}
 	g.sequencia++
 
@@ -178,8 +185,8 @@ func (g *GrafoItinerarios) prepararTransacao(
 	}, nil
 }
 
-// abortarTransacao libera uma preparacao conhecida apenas uma vez.
-// Nao deve ser chamada por timeout sem uma decisao valida de aborto.
+// abortarTransacao libera uma preparacao conhecida apenas uma vez. Nao deve ser chamada por timeout sem uma decisao valida de aborto.
+// Recebe: ID e motivo de uma decisão válida de aborto.
 func (g *GrafoItinerarios) abortarTransacao(id, motivo string) (protocolo.RespostaPreparacao, error) {
 	g.manutencao.RLock()
 	defer g.manutencao.RUnlock()
@@ -239,32 +246,32 @@ func (g *GrafoItinerarios) abortarTransacao(id, motivo string) (protocolo.Respos
 	return protocolo.RespostaPreparacao{TransacaoID: id, Estado: protocolo.TransacaoAbortada, Motivo: motivo}, nil
 }
 
-// decimalValido rejeita negativos, NaN, infinitos, valores acima do limite ou com mais de duas
-// casas decimais.
+// decimalValido rejeita negativos, NaN, infinitos, valores acima do limite ou com mais de duas casas decimais.
+// Recebe: valor decimal e limite máximo.
 func decimalValido(valor, limite float64) bool {
 	return !math.IsNaN(valor) && !math.IsInf(valor, 0) && valor >= 0 && valor <= limite && math.Abs(valor*100-math.Round(valor*100)) < 0.000001
 }
 
 // iniciou compara a partida da carona com o relogio. No horario exato da partida ela ja iniciou.
+// Recebe: oferta e instante atual.
 func (g *GrafoItinerarios) iniciou(o *oferta, agora time.Time) bool {
 	h, err := time.Parse(time.RFC3339, o.entrada.DataHora)
 	return err != nil || !h.After(agora)
 }
 
-// disponivel exige trecho ativo, vagas e partida do trecho no futuro. Quem chama protege os mapas
-// com trava.
+// disponivel exige trecho ativo, vagas e partida do trecho no futuro. Quem chama protege os mapas com trava.
+// Recebe: trecho e instante atual; exige proteção dos mapas.
 func (g *GrafoItinerarios) disponivel(t protocolo.Trecho, agora time.Time) bool {
 	o, ok := g.caronas[t.CaronaID]
 	return ok && o.status != protocolo.Cancelada && t.Status == protocolo.Ativa && t.Assentos > 0 && partida(t).After(agora)
 }
 
-// validarCancelamento impede cancelar conexoes de reservas ativas cujo primeiro trecho ja
-// iniciou. Examina o itinerario inteiro, inclusive trechos de outros motoristas. Exige trava.
+// validarCancelamento impede cancelar conexoes de reservas ativas cujo primeiro trecho ja iniciou. Examina o itinerario inteiro, inclusive trechos de outros motoristas. Exige trava.
+// Recebe: IDs afetados e instante atual; exige proteção do estado.
 func (g *GrafoItinerarios) validarCancelamento(ids []string, agora time.Time) error {
 	selecionados := make(map[string]bool, len(ids))
 	for _, id := range ids {
-		// Uma preparacao pendente ainda depende de uma decisao conjunta.
-		// Cancelar a oferta aqui invalidaria as vagas prometidas ao protocolo.
+
 		if len(g.trechos[id].preparados) > 0 {
 			return fmt.Errorf("cancelamento recusado: trecho %s tem transação preparada", id)
 		}
@@ -275,7 +282,7 @@ func (g *GrafoItinerarios) validarCancelamento(ids []string, agora time.Time) er
 		}
 		selecionados[id] = true
 	}
-	/* Basta o PRIMEIRO trecho da reserva ter iniciado para proteger suas conexoes futuras. */
+
 	for _, r := range g.reservas {
 		inicio := partida(r.Assentos[0].Trecho)
 		if r.InicioItinerario != "" {

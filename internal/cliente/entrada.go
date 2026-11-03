@@ -1,5 +1,7 @@
-// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
-// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Autor: Arthur de Andrade Souza.
+// Matéria: TEC502 - TP01 - Concorrência e Conectividade - 2026.2.
+// Declaração de não plágio: Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
+// Funcionalidade: Lê e valida entradas do terminal, configura destinos e troca mensagens NDJSON por socket TCP.
 package cliente
 
 import (
@@ -22,10 +24,10 @@ import (
 	"vaijunto/internal/protocolo"
 )
 
-// voltar encerra o formulario atual sem enviar uma requisicao.
 var voltar = errors.New("voltar ao menu")
 
 // cabecalho imprime titulo e detalhe opcional. Sem retorno.
+// Recebe: título, detalhe opcional e saída de m.
 func (m *menu) cabecalho(titulo, detalhe string) {
 	fmt.Fprintf(m.saida, "\n--- %s ---\n", titulo)
 	if detalhe != "" {
@@ -34,6 +36,7 @@ func (m *menu) cabecalho(titulo, detalhe string) {
 }
 
 // opcoes imprime as opcoes recebidas. Sem retorno.
+// Recebe: lista variável de opções e saída de m.
 func (m *menu) opcoes(opcoes ...string) {
 	for _, opcao := range opcoes {
 		fmt.Fprintln(m.saida, opcao)
@@ -42,6 +45,7 @@ func (m *menu) opcoes(opcoes ...string) {
 }
 
 // campo normaliza o texto quando solicitado e repete a entrada enquanto a validacao indicar erro.
+// Recebe: rótulo, normalizador opcional e validador, no menu m.
 func (m *menu) campo(rotulo string, normalizar func(string) string, validar func(string) error) string {
 	for m.err == nil {
 		valor := m.texto(rotulo)
@@ -62,11 +66,13 @@ func (m *menu) campo(rotulo string, normalizar func(string) string, validar func
 }
 
 // email le o e-mail e converte para minusculas antes de validar.
+// Recebe: entrada do menu m, sem argumentos explícitos.
 func (m *menu) email() string {
 	return m.campo("E-mail", strings.ToLower, protocolo.ValidarEmail)
 }
 
 // cidade le uma cidade e impede repeticao entre os nomes ja informados.
+// Recebe: rótulo e cidades anteriores, no menu m.
 func (m *menu) cidade(rotulo string, anteriores []string) string {
 	return m.campo(rotulo, func(s string) string {
 		return strings.Join(strings.Fields(s), " ")
@@ -84,11 +90,13 @@ func (m *menu) cidade(rotulo string, anteriores []string) string {
 }
 
 // dinheiro formata reais com duas casas decimais e virgula.
+// Recebe: valor em reais.
 func dinheiro(valor float64) string {
 	return "R$ " + strings.ReplaceAll(fmt.Sprintf("%.2f", valor), ".", ",")
 }
 
 // horarioLegivel converte RFC3339 para data, hora e fuso; preserva o texto se a conversao falhar.
+// Recebe: instante RFC3339 em texto.
 func horarioLegivel(valor string) string {
 	t, err := time.Parse(time.RFC3339, valor)
 	if err != nil {
@@ -98,6 +106,7 @@ func horarioLegivel(valor string) string {
 }
 
 // caracteresSeguros rejeita controles e caracteres de formatacao invisiveis na entrada do
+// Recebe: texto digitado.
 func caracteresSeguros(s string) bool {
 	for _, r := range s {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
@@ -107,10 +116,10 @@ func caracteresSeguros(s string) bool {
 	return true
 }
 
-// O campo decimal aceita ponto ou virgula, com ate duas casas.
 var formatoDecimal = regexp.MustCompile(`^[0-9]+(\.[0-9]{1,2})?$`)
 
 // texto le uma linha preenchida. Registra EOF ou /voltar em m.err para interromper o formulario.
+// Recebe: rótulo do campo e entrada do menu m.
 func (m *menu) texto(rotulo string) string {
 	for m.err == nil {
 		fmt.Fprintf(m.saida, "%s: ", rotulo)
@@ -139,6 +148,7 @@ func (m *menu) texto(rotulo string) string {
 }
 
 // numero repete a leitura ate receber um inteiro no intervalo ou interromper o formulario.
+// Recebe: rótulo e limites mínimo/máximo, no menu m.
 func (m *menu) numero(rotulo string, minimo, maximo int) int {
 	for m.err == nil {
 		s := m.texto(rotulo)
@@ -155,11 +165,13 @@ func (m *menu) numero(rotulo string, minimo, maximo int) int {
 }
 
 // preco atalho para leitura de um valor em reais usando a validacao decimal.
+// Recebe: entrada do menu m, sem argumentos explícitos.
 func (m *menu) preco() float64 {
 	return m.decimal("Preço em reais (ex.: 25,50)", 0, 1000000)
 }
 
 // decimal aceita ponto ou virgula e ate duas casas decimais dentro dos limites.
+// Recebe: rótulo e limites, no menu m.
 func (m *menu) decimal(rotulo string, minimo, maximo float64) float64 {
 	for m.err == nil {
 		s := strings.ReplaceAll(m.texto(rotulo), ",", ".")
@@ -176,6 +188,7 @@ func (m *menu) decimal(rotulo string, minimo, maximo float64) float64 {
 }
 
 // data aceita data brasileira ou ISO e retorna AAAA-MM-DD para o protocolo.
+// Recebe: entrada do menu m, sem argumentos explícitos.
 func (m *menu) data() string {
 	for m.err == nil {
 		s := m.texto("Data (DD/MM/AAAA ou AAAA-MM-DD)")
@@ -193,6 +206,7 @@ func (m *menu) data() string {
 }
 
 // Executar recebe o perfil, interpreta o endereco do servidor e abre o menu interativo.
+// Recebe: perfil do cliente; lê opções e ambiente.
 func Executar(perfil string) error {
 	endereco := flag.String("servidor", os.Getenv("VAIJUNTO_SERVIDOR"), "Endereco TCP direto; quando informado, dispensa a escolha da empresa")
 	vaijunto := flag.String("vaijunto", enderecoDaEmpresa("VAIJUNTO_SERVIDOR_VAIJUNTO", "localhost:7001"), "Endereco TCP do VAIJUNTO")
@@ -211,6 +225,7 @@ func Executar(perfil string) error {
 }
 
 // enderecoDaEmpresa obtem o endereco TCP da variavel de ambiente ou usa o padrao recebido.
+// Recebe: nome da variável de ambiente e endereço padrão.
 func enderecoDaEmpresa(variavel, padrao string) string {
 	if endereco := os.Getenv(variavel); endereco != "" {
 		return endereco
@@ -218,8 +233,8 @@ func enderecoDaEmpresa(variavel, padrao string) string {
 	return padrao
 }
 
-// novaChave gera 16 bytes aleatorios em hexadecimal para identificar uma nova publicacao ou
-// confirmacao.
+// novaChave gera 16 bytes aleatorios em hexadecimal para identificar uma nova publicacao ou confirmacao.
+// Recebe: nenhum argumento.
 func novaChave() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -228,10 +243,8 @@ func novaChave() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// EnviarRequisicao Serializa a requisicao, conecta com prazo de 5 segundos e define 30 segundos
-// para a operacao. Envia JSON com quebra de linha, le a resposta limitada a 16 MiB e verifica seu
-// status. Fecha o socket ao sair. Erro de recepcao nao prova que o servidor deixou de executar o
-// pedido.
+// EnviarRequisicao Serializa a requisicao, conecta com prazo de 5 segundos e define 30 segundos para a operacao. Envia JSON com quebra de linha, le a resposta limitada a 16 MiB e verifica seu status. Fecha o socket ao sair. Erro de recepcao nao prova que o servidor deixou de executar o pedido.
+// Recebe: endereço TCP e requisição do protocolo.
 func EnviarRequisicao(endereco string, req protocolo.Requisicao) (*protocolo.Resposta, error) {
 	dados, err := json.Marshal(req)
 	if err != nil {
@@ -240,12 +253,12 @@ func EnviarRequisicao(endereco string, req protocolo.Requisicao) (*protocolo.Res
 	if len(dados) >= protocolo.LimiteMensagem {
 		return nil, fmt.Errorf("requisição excede 1 MiB")
 	}
-	/* Conectar tem prazo de 5 s; leitura e escrita da operacao recebem prazo de 30 s. */
+
 	conn, err := net.DialTimeout("tcp", endereco, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	// Fechar a conexao ao sair da funcao, mesmo que haja erro.
+
 	defer conn.Close()
 	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
 		return nil, err
@@ -254,7 +267,7 @@ func EnviarRequisicao(endereco string, req protocolo.Requisicao) (*protocolo.Res
 	if _, err := writer.Write(append(dados, '\n')); err != nil {
 		return nil, err
 	}
-	/* Flush envia os bytes que ainda estao no buffer do cliente. */
+
 	if err := writer.Flush(); err != nil {
 		return nil, err
 	}
