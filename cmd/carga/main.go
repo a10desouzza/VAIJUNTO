@@ -1,15 +1,5 @@
-// Arquivo: cmd/carga/main.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Recebe as opções para simular vários passageiros e disputar vagas por TCP.
-// Escolhe a simulação local ou entre empresas e apresenta suas métricas em JSON.
-// Permite avaliar o sistema sem preencher os formulários dos clientes manualmente.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package main
 
 import (
@@ -18,15 +8,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
-
 	"vaijunto/internal/carga"
 	"vaijunto/internal/configuracao"
 )
 
 // main le endereco, clientes e vagas. Imprime as metricas em JSON e encerra com erro se o teste
 // falhar.
-// Recebe: nenhum parametro.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func main() {
 	padrao := os.Getenv("VAIJUNTO_SERVIDOR")
 	if padrao == "" {

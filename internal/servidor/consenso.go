@@ -1,15 +1,5 @@
-// Arquivo: internal/servidor/consenso.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Escolhe uma decisão por transação usando promessas e aceites de uma maioria.
-// Ordena propostas por cédula lógica e preserva valores anteriormente aceitos.
-// Permite que outra empresa retome a decisão sem escolher um resultado conflitante.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package servidor
 
 import (
@@ -22,8 +12,6 @@ import (
 
 // A maior cedula prometida impede aceitar decisoes concorrentes em cedulas
 // antigas. O proponente deve adotar o valor aceito de maior cedula consultada.
-// Recebe: acao string, p mensagemConsenso.
-// Retorna: a promessa, o valor anteriormente aceito e eventual voto/certificado, ou erro; uma resposta nao implica necessariamente voto na cedula solicitada.
 func (d *Distribuido) consenso(acao string, p mensagemConsenso) (respostaConsenso, error) {
 	if err := d.validarMeta(p.Meta); err != nil {
 		return respostaConsenso{}, err
@@ -74,8 +62,6 @@ func (d *Distribuido) consenso(acao string, p mensagemConsenso) (respostaConsens
 }
 
 // decidir busca maioria e preserva o valor ja aceito com a maior cedula.
-// Recebe: ctx context.Context, m metaTransacao, desejado decisao.
-// Retorna: um certificado de decisao escolhido por maioria ou erro; ausencia de resposta nao prova que nenhum valor foi escolhido.
 func (d *Distribuido) decidir(ctx context.Context, m metaTransacao, desejado decisao) (certificado, error) {
 	liberar := travarOperacao(&d.propostas, m.ID)
 	defer liberar()

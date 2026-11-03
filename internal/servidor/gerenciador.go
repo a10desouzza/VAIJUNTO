@@ -1,19 +1,12 @@
-// Arquivo: internal/servidor/gerenciador.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Mantém em memória contas, sessões, ofertas, trechos e reservas da empresa.
-// Implementa autenticação, geração de identificadores e acesso aos estados dos trechos.
-// Define as travas e sua ordem de aquisição para coordenar operações locais concorrentes.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package servidor
 
 import (
+	"crypto/pbkdf2"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -21,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 	"vaijunto/internal/protocolo"
 )
 
@@ -80,8 +72,6 @@ type GrafoItinerarios struct {
 }
 
 // NovoGrafo inicializa os mapas e o relogio. Retorna um servidor sem dados cadastrados.
-// Recebe: nenhum parametro.
-// Retorna: um ponteiro para o estado local inicializado com mapas vazios e relogio de horario real.
 func NovoGrafo() *GrafoItinerarios {
 	return &GrafoItinerarios{
 		logger:       log.Default(),
@@ -99,16 +89,12 @@ func NovoGrafo() *GrafoItinerarios {
 }
 
 // novoID gera um ID com prefixo e contador. Exige que quem chamou mantenha a trava de escrita.
-// Recebe: prefixo string.
-// Retorna: string.
 func (g *GrafoItinerarios) novoID(prefixo string) string {
 	g.sequencia++
 	return fmt.Sprintf("%s%06d", prefixo, g.sequencia)
 }
 
-// Cadastrar guarda a senha em texto puro na memoria para o prototipo didatico.
-// Recebe: c protocolo.Cadastro.
-// Retorna: (protocolo.Usuario, error). Em falha, devolve error; em sucesso, erro nil.
+// Cadastrar armazena apenas PBKDF2-SHA256 com salt aleatorio por conta.
 func (g *GrafoItinerarios) Cadastrar(c protocolo.Cadastro) (protocolo.Usuario, error) {
 	c.Email = strings.ToLower(strings.TrimSpace(c.Email))
 	c.Nome = strings.TrimSpace(c.Nome)
@@ -120,19 +106,21 @@ func (g *GrafoItinerarios) Cadastrar(c protocolo.Cadastro) (protocolo.Usuario, e
 	if c.Perfil != protocolo.Motorista && c.Perfil != protocolo.Passageiro {
 		return protocolo.Usuario{}, fmt.Errorf("perfil deve ser MOTORISTA ou PASSAGEIRO")
 	}
+	senha, err := protegerSenha(c.Senha)
+	if err != nil {
+		return protocolo.Usuario{}, err
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if _, ok := g.usuarios[c.Email]; ok {
 		return protocolo.Usuario{}, fmt.Errorf("email já cadastrado")
 	}
 	u := protocolo.Usuario{Nome: c.Nome, Email: c.Email, Perfil: c.Perfil}
-	g.usuarios[c.Email] = conta{usuario: u, senha: c.Senha}
+	g.usuarios[c.Email] = conta{usuario: u, senha: senha}
 	return u, nil
 }
 
 // Autenticar confere as credenciais e retorna uma sessao aleatoria com validade de 15 minutos.
-// Recebe: c protocolo.Credenciais.
-// Retorna: (protocolo.Sessao, error). Em falha, devolve error; em sucesso, erro nil.
 func (g *GrafoItinerarios) Autenticar(c protocolo.Credenciais) (protocolo.Sessao, error) {
 	email := strings.ToLower(strings.TrimSpace(c.Email))
 	if len(c.Senha) > 128 {
@@ -141,7 +129,7 @@ func (g *GrafoItinerarios) Autenticar(c protocolo.Credenciais) (protocolo.Sessao
 	g.mu.RLock()
 	usuario, ok := g.usuarios[email]
 	g.mu.RUnlock()
-	if !ok || c.Senha != usuario.senha {
+	if !ok || !conferirSenha(c.Senha, usuario.senha) {
 		return protocolo.Sessao{}, fmt.Errorf("credenciais inválidas")
 	}
 	aleatorio := make([]byte, 32)
@@ -161,8 +149,6 @@ func (g *GrafoItinerarios) Autenticar(c protocolo.Credenciais) (protocolo.Sessao
 
 // autorizar confere sessao, validade e perfil. IMPORTANTE: quem chama ja deve manter Lock ou
 // RLock.
-// Recebe: sessaoID, perfil string.
-// Retorna: (protocolo.Usuario, error). Em falha, devolve error; em sucesso, erro nil.
 func (g *GrafoItinerarios) autorizar(sessaoID, perfil string) (protocolo.Usuario, error) {
 	s, ok := g.sessoes[sessaoID]
 	if !ok || !s.expira.After(g.agora()) {
@@ -176,8 +162,6 @@ func (g *GrafoItinerarios) autorizar(sessaoID, perfil string) (protocolo.Usuario
 }
 
 // Desconectar remove a sessao. Nao apaga a conta nem cancela suas reservas.
-// Recebe: sessaoID string.
-// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func (g *GrafoItinerarios) Desconectar(sessaoID string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -190,8 +174,6 @@ func (g *GrafoItinerarios) Desconectar(sessaoID string) error {
 }
 
 // expirarSessoes exige trava exclusiva e registra cada expiracao uma unica vez.
-// Recebe: agora time.Time.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func (g *GrafoItinerarios) expirarSessoes(agora time.Time) {
 	for id, s := range g.sessoes {
 		if !s.expira.After(agora) {
@@ -202,8 +184,6 @@ func (g *GrafoItinerarios) expirarSessoes(agora time.Time) {
 }
 
 // limparSessoesExpiradas adquire a trava do estado e remove sessoes vencidas usando o horario atual.
-// Recebe: nenhum parametro.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func (g *GrafoItinerarios) limparSessoesExpiradas() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -211,8 +191,6 @@ func (g *GrafoItinerarios) limparSessoesExpiradas() {
 }
 
 // Os ponteiros publicados permanecem estaveis; cancelamentos alteram seu status.
-// Recebe: ids []string.
-// Retorna: o mapa de IDs para estados locais ou erro de trecho repetido/inexistente; os ponteiros continuam sujeitos as travas do grafo.
 func (g *GrafoItinerarios) localizarTrechos(ids []string) (map[string]*estadoTrecho, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -231,8 +209,6 @@ func (g *GrafoItinerarios) localizarTrechos(ids []string) (map[string]*estadoTre
 }
 
 // Nunca aguardar travas de trechos mantendo g.mu. IDs ordenados evitam ciclos.
-// Recebe: estados map[string]*estadoTrecho.
-// Retorna: uma funcao que libera as travas adquiridas; o chamador deve executa-la ao terminar a operacao protegida.
 func travarTrechos(estados map[string]*estadoTrecho) func() {
 	ids := make([]string, 0, len(estados))
 	for id := range estados {
@@ -247,4 +223,42 @@ func travarTrechos(estados map[string]*estadoTrecho) func() {
 			estados[ids[i]].mu.Unlock()
 		}
 	}
+}
+
+// O formato inclui algoritmo, custo, salt e hash. Nunca guarda a senha original.
+const custoSenha = 600000
+
+func protegerSenha(senha string) (string, error) {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return "", err
+	}
+	hash, err := pbkdf2.Key(sha256.New, senha, salt, custoSenha, 32)
+	if err != nil {
+		return "", err
+	}
+	return "pbkdf2-sha256$600000$" + hex.EncodeToString(salt) + "$" + hex.EncodeToString(hash), nil
+}
+func decodificarSenha(valor string) ([]byte, []byte, error) {
+	partes := strings.Split(valor, "$")
+	if len(partes) != 4 || partes[0] != "pbkdf2-sha256" || partes[1] != "600000" {
+		return nil, nil, fmt.Errorf("hash de senha invalido")
+	}
+	salt, err := hex.DecodeString(partes[2])
+	if err != nil || len(salt) != 16 {
+		return nil, nil, fmt.Errorf("salt de senha invalido")
+	}
+	hash, err := hex.DecodeString(partes[3])
+	if err != nil || len(hash) != 32 {
+		return nil, nil, fmt.Errorf("hash de senha invalido")
+	}
+	return salt, hash, nil
+}
+func conferirSenha(senha, armazenada string) bool {
+	salt, esperado, err := decodificarSenha(armazenada)
+	if err != nil {
+		return false
+	}
+	hash, err := pbkdf2.Key(sha256.New, senha, salt, custoSenha, 32)
+	return err == nil && subtle.ConstantTimeCompare(hash, esperado) == 1
 }

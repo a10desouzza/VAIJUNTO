@@ -1,15 +1,5 @@
-// Arquivo: internal/configuracao/rede.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Define os endereços padrão e valida as conexões TCP dos clientes.
-// Interpreta identidades e URLs REST usadas na comunicação entre empresas.
-// Recusa endereços inválidos, empresas repetidas e configurações incompatíveis.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package configuracao
 
 import (
@@ -37,8 +27,6 @@ type ServidorCliente struct {
 
 // ValidarEnderecoCliente rejeita URLs e mapeamentos Docker antes de pedir credenciais.
 // O cliente usa o endereco do computador e apenas a porta TCP publicada nele.
-// Recebe: endereco string.
-// Retorna: nil se o formato host:porta e o intervalo estiverem validos; erro descritivo caso contrario. Nao testa acesso ao servidor.
 func ValidarEnderecoCliente(endereco string) error {
 	host, porta, err := net.SplitHostPort(endereco)
 	if err != nil || strings.TrimSpace(host) == "" || strings.ContainsAny(host, "/ \t\r\n") {
@@ -59,8 +47,6 @@ type Empresa struct {
 var identificadorEmpresa = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 // ValidarEmpresaID verifica se o identificador da empresa respeita o formato e o tamanho permitidos.
-// Recebe: id string.
-// Retorna: nil para identidade permitida; erro se o formato ou tamanho forem invalidos.
 func ValidarEmpresaID(id string) error {
 	if !identificadorEmpresa.MatchString(id) {
 		return fmt.Errorf("empresa deve ter de 1 a 64 letras, números, hífens ou sublinhados")
@@ -69,8 +55,6 @@ func ValidarEmpresaID(id string) error {
 }
 
 // Empresas usa o formato empresa-b=http://host:porta,empresa-c=http://host:porta.
-// Recebe: texto, propria string.
-// Retorna: a lista de pares REST validada ou erro de identidade, duplicacao ou URL.
 func Empresas(texto, propria string) ([]Empresa, error) {
 	if err := ValidarEmpresaID(propria); err != nil {
 		return nil, err

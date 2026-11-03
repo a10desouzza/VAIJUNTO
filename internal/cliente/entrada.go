@@ -1,27 +1,24 @@
-// Arquivo: internal/cliente/entrada.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Implementa a leitura dos campos e a apresentação de informações no terminal.
-// Repete entradas inválidas e trata datas, valores, cidades e números dentro dos limites.
-// Registra fim da entrada ou /voltar para que o formulário possa ser interrompido.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package cliente
 
 import (
+	"bufio"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"net"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
-
+	"vaijunto/internal/configuracao"
 	"vaijunto/internal/protocolo"
 )
 
@@ -29,9 +26,6 @@ import (
 var voltar = errors.New("voltar ao menu")
 
 // cabecalho imprime titulo e detalhe opcional. Sem retorno.
-// Usa o receptor m para acessar entrada, saida e estado do menu.
-// Recebe: titulo, detalhe string.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func (m *menu) cabecalho(titulo, detalhe string) {
 	fmt.Fprintf(m.saida, "\n--- %s ---\n", titulo)
 	if detalhe != "" {
@@ -40,9 +34,6 @@ func (m *menu) cabecalho(titulo, detalhe string) {
 }
 
 // opcoes imprime as opcoes recebidas. Sem retorno.
-// Usa o receptor m para acessar entrada, saida e estado do menu.
-// Recebe: opcoes ...string.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func (m *menu) opcoes(opcoes ...string) {
 	for _, opcao := range opcoes {
 		fmt.Fprintln(m.saida, opcao)
@@ -51,9 +42,6 @@ func (m *menu) opcoes(opcoes ...string) {
 }
 
 // campo normaliza o texto quando solicitado e repete a entrada enquanto a validacao indicar erro.
-// Usa o receptor m para acessar entrada, saida e estado do menu.
-// Recebe: rotulo string, normalizar func(string) string, validar func(string) error.
-// Retorna: o texto normalizado e validado, ou texto vazio se a entrada for interrompida; o motivo fica em m.err.
 func (m *menu) campo(rotulo string, normalizar func(string) string, validar func(string) error) string {
 	for m.err == nil {
 		valor := m.texto(rotulo)
@@ -74,17 +62,11 @@ func (m *menu) campo(rotulo string, normalizar func(string) string, validar func
 }
 
 // email le o e-mail e converte para minusculas antes de validar.
-// Usa o receptor m para acessar entrada, saida e estado do menu.
-// Recebe: nenhum parametro.
-// Retorna: string.
 func (m *menu) email() string {
 	return m.campo("E-mail", strings.ToLower, protocolo.ValidarEmail)
 }
 
 // cidade le uma cidade e impede repeticao entre os nomes ja informados.
-// Usa o receptor m para acessar entrada, saida e estado do menu.
-// Recebe: rotulo string, anteriores []string.
-// Retorna: string.
 func (m *menu) cidade(rotulo string, anteriores []string) string {
 	return m.campo(rotulo, func(s string) string {
 		return strings.Join(strings.Fields(s), " ")
@@ -102,15 +84,11 @@ func (m *menu) cidade(rotulo string, anteriores []string) string {
 }
 
 // dinheiro formata reais com duas casas decimais e virgula.
-// Recebe: valor float64.
-// Retorna: string.
 func dinheiro(valor float64) string {
 	return "R$ " + strings.ReplaceAll(fmt.Sprintf("%.2f", valor), ".", ",")
 }
 
 // horarioLegivel converte RFC3339 para data, hora e fuso; preserva o texto se a conversao falhar.
-// Recebe: valor string.
-// Retorna: string.
 func horarioLegivel(valor string) string {
 	t, err := time.Parse(time.RFC3339, valor)
 	if err != nil {
@@ -120,8 +98,6 @@ func horarioLegivel(valor string) string {
 }
 
 // caracteresSeguros rejeita controles e caracteres de formatacao invisiveis na entrada do
-// Recebe: s string.
-// Retorna: true quando o texto nao contem controles nem caracteres Unicode de formatacao; false caso contrario.
 func caracteresSeguros(s string) bool {
 	for _, r := range s {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
@@ -135,9 +111,6 @@ func caracteresSeguros(s string) bool {
 var formatoDecimal = regexp.MustCompile(`^[0-9]+(\.[0-9]{1,2})?$`)
 
 // texto le uma linha preenchida. Registra EOF ou /voltar em m.err para interromper o formulario.
-// Usa o receptor m para acessar entrada, saida e estado do menu.
-// Recebe: rotulo string.
-// Retorna: string.
 func (m *menu) texto(rotulo string) string {
 	for m.err == nil {
 		fmt.Fprintf(m.saida, "%s: ", rotulo)
@@ -166,9 +139,6 @@ func (m *menu) texto(rotulo string) string {
 }
 
 // numero repete a leitura ate receber um inteiro no intervalo ou interromper o formulario.
-// Usa o receptor m para acessar entrada, saida e estado do menu.
-// Recebe: rotulo string, minimo, maximo int.
-// Retorna: o inteiro aceito no intervalo ou zero em interrupcao; consultar m.err para distinguir interrupcao de um zero valido.
 func (m *menu) numero(rotulo string, minimo, maximo int) int {
 	for m.err == nil {
 		s := m.texto(rotulo)
@@ -185,17 +155,11 @@ func (m *menu) numero(rotulo string, minimo, maximo int) int {
 }
 
 // preco atalho para leitura de um valor em reais usando a validacao decimal.
-// Usa o receptor m para acessar entrada, saida e estado do menu.
-// Recebe: nenhum parametro.
-// Retorna: float64.
 func (m *menu) preco() float64 {
 	return m.decimal("Preço em reais (ex.: 25,50)", 0, 1000000)
 }
 
 // decimal aceita ponto ou virgula e ate duas casas decimais dentro dos limites.
-// Usa o receptor m para acessar entrada, saida e estado do menu.
-// Recebe: rotulo string, minimo, maximo float64.
-// Retorna: o decimal aceito nos limites ou zero em interrupcao; o motivo fica em m.err.
 func (m *menu) decimal(rotulo string, minimo, maximo float64) float64 {
 	for m.err == nil {
 		s := strings.ReplaceAll(m.texto(rotulo), ",", ".")
@@ -212,9 +176,6 @@ func (m *menu) decimal(rotulo string, minimo, maximo float64) float64 {
 }
 
 // data aceita data brasileira ou ISO e retorna AAAA-MM-DD para o protocolo.
-// Usa o receptor m para acessar entrada, saida e estado do menu.
-// Recebe: nenhum parametro.
-// Retorna: a data valida em AAAA-MM-DD ou texto vazio em interrupcao; o motivo fica em m.err.
 func (m *menu) data() string {
 	for m.err == nil {
 		s := m.texto("Data (DD/MM/AAAA ou AAAA-MM-DD)")
@@ -229,4 +190,87 @@ func (m *menu) data() string {
 		fmt.Fprintln(m.saida, "Data inexistente ou inválida. Exemplo: 01/10/2026.")
 	}
 	return ""
+}
+
+// Executar recebe o perfil, interpreta o endereco do servidor e abre o menu interativo.
+func Executar(perfil string) error {
+	endereco := flag.String("servidor", os.Getenv("VAIJUNTO_SERVIDOR"), "Endereco TCP direto; quando informado, dispensa a escolha da empresa")
+	vaijunto := flag.String("vaijunto", enderecoDaEmpresa("VAIJUNTO_SERVIDOR_VAIJUNTO", "localhost:7001"), "Endereco TCP do VAIJUNTO")
+	minas := flag.String("minas", enderecoDaEmpresa("VAIJUNTO_SERVIDOR_MINAS", "localhost:7002"), "Endereco TCP da Minas")
+	saoPaulo := flag.String("sao-paulo", enderecoDaEmpresa("VAIJUNTO_SERVIDOR_SAO_PAULO", "localhost:7003"), "Endereco TCP de Sao Paulo")
+	flag.Parse()
+	if *endereco != "" {
+		return ExecutarMenu(*endereco, perfil, os.Stdin, os.Stdout)
+	}
+	empresas := []configuracao.ServidorCliente{
+		{Nome: "VAIJUNTO", Endereco: *vaijunto},
+		{Nome: "Minas", Endereco: *minas},
+		{Nome: "São Paulo", Endereco: *saoPaulo},
+	}
+	return ExecutarComSelecao(empresas, perfil, os.Stdin, os.Stdout)
+}
+
+// enderecoDaEmpresa obtem o endereco TCP da variavel de ambiente ou usa o padrao recebido.
+func enderecoDaEmpresa(variavel, padrao string) string {
+	if endereco := os.Getenv(variavel); endereco != "" {
+		return endereco
+	}
+	return padrao
+}
+
+// novaChave gera 16 bytes aleatorios em hexadecimal para identificar uma nova publicacao ou
+// confirmacao.
+func novaChave() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// EnviarRequisicao Serializa a requisicao, conecta com prazo de 5 segundos e define 30 segundos
+// para a operacao. Envia JSON com quebra de linha, le a resposta limitada a 16 MiB e verifica seu
+// status. Fecha o socket ao sair. Erro de recepcao nao prova que o servidor deixou de executar o
+// pedido.
+func EnviarRequisicao(endereco string, req protocolo.Requisicao) (*protocolo.Resposta, error) {
+	dados, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	if len(dados) >= protocolo.LimiteMensagem {
+		return nil, fmt.Errorf("requisição excede 1 MiB")
+	}
+	/* Conectar tem prazo de 5 s; leitura e escrita da operacao recebem prazo de 30 s. */
+	conn, err := net.DialTimeout("tcp", endereco, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	// Fechar a conexao ao sair da funcao, mesmo que haja erro.
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return nil, err
+	}
+	writer := bufio.NewWriter(conn)
+	if _, err := writer.Write(append(dados, '\n')); err != nil {
+		return nil, err
+	}
+	/* Flush envia os bytes que ainda estao no buffer do cliente. */
+	if err := writer.Flush(); err != nil {
+		return nil, err
+	}
+	resposta, err := bufio.NewReader(io.LimitReader(conn, 16*protocolo.LimiteMensagem+1)).ReadBytes('\n')
+	if err != nil {
+		return nil, fmt.Errorf("resposta NDJSON incompleta: %w", err)
+	}
+	if len(resposta) > 16*protocolo.LimiteMensagem {
+		return nil, fmt.Errorf("resposta excede 16 MiB")
+	}
+	var resp protocolo.Resposta
+	if err := json.Unmarshal(resposta, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Status != protocolo.Sucesso && resp.Status != protocolo.Erro {
+		return nil, fmt.Errorf("status inválido")
+	}
+	return &resp, nil
 }

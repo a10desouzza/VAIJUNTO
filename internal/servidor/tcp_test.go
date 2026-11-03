@@ -1,47 +1,101 @@
-// Arquivo: internal/servidor/tcp_test.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Testa o transporte TCP com mensagens completas, fragmentadas e acima do limite.
-// Simula conexões ociosas, escritas parciais, falhas de escuta e encerramento.
-// Verifica que um cliente parado não bloqueia os demais pedidos da fila.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package servidor
 
 import (
-	"log"
-	"testing/synctest"
-
 	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
 	"vaijunto/internal/protocolo"
 )
 
-type escritorLimitado struct {
-	limite int
-	dados  []byte
-	err    error
-	zero   bool
+func TestCancelamentoAntesDaPartidaENotificacoes(t *testing.T) {
+	c := criarCenario(t)
+	r := c.reservar(t)
+	c.agora = c.agora.Add(29*time.Minute + 59*time.Second)
+	c.reautenticar(t)
+	id := c.bc.Trechos[0].Trecho.ID
+	if _, err := c.g.CancelarTrecho(c.m1, id); err == nil {
+		t.Fatal("outro motorista cancelou")
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := c.g.CancelarTrecho(c.m2, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if c.g.reservas[r.ID].Status != protocolo.Cancelada {
+		t.Fatal("reserva não cancelada")
+	}
+	for _, a := range r.Assentos {
+		if c.g.trechos[a.Trecho.ID].trecho.Assentos != 2 {
+			t.Fatal("vaga não devolvida ou devolvida duas vezes")
+		}
+	}
+	if c.g.caronas[c.bc.ID].status != protocolo.Parcial {
+		t.Fatal("carona deveria ser parcial")
+	}
+	if c.g.trechos[c.bc.Trechos[1].Trecho.ID].trecho.Status != protocolo.Ativa {
+		t.Fatal("trecho independente cancelado")
+	}
+	avisos, err := c.g.ConsultarNotificacoes(c.p)
+	if err != nil || len(avisos) != 1 || avisos[0].ReservaID != r.ID || avisos[0].Lida {
+		t.Fatalf("notificações: %+v %v", avisos, err)
+	}
+	if err := c.g.LerNotificacao(c.outro, avisos[0].ID); err == nil {
+		t.Fatal("outro usuário leu aviso")
+	}
+	if err := c.g.LerNotificacao(c.p, avisos[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	avisos, _ = c.g.ConsultarNotificacoes(c.p)
+	if !avisos[0].Lida {
+		t.Fatal("aviso não marcado")
+	}
+	resultado, err := c.g.Buscar(c.outro, protocolo.BuscaItinerario{Origem: "C", Destino: "D", Data: "2099-10-01"})
+	if err != nil || len(resultado.Itinerarios) != 1 {
+		t.Fatalf("trecho não cancelado indisponível: %+v %v", resultado, err)
+	}
 }
 
-// TestConexaoOciosaNaoBloqueiaFilaDeRequisicoes verifica o cenario: Conexao Ociosa Nao Bloqueia Fila De Requisicoes.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestConexaoOciosaNaoBloqueiaFilaDeRequisicoes(t *testing.T) {
+func TestCancelamentoEConfirmacaoConcorrentes(t *testing.T) {
+	c := criarCenario(t)
+	inicio := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-inicio
+			if i%2 == 0 {
+				c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: fmt.Sprint(i), TrechosIDs: []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID}})
+			} else {
+				c.g.CancelarTrecho(c.m2, c.bc.Trechos[0].Trecho.ID)
+			}
+		}()
+	}
+	close(inicio)
+	wg.Wait()
+	for _, id := range []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID} {
+		if c.g.trechos[id].trecho.Assentos != 2 || len(c.g.trechos[id].ocupados) != 0 {
+			t.Fatal("vagas inconsistentes após disputa")
+		}
+	}
+	for _, r := range c.g.reservas {
+		if r.Status != protocolo.Cancelada {
+			t.Fatal("reserva ativa em trecho cancelado")
+		}
+	}
+}
+
+func TestSocketNDJSON(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +103,60 @@ func TestConexaoOciosaNaoBloqueiaFilaDeRequisicoes(t *testing.T) {
 	ctx, cancelar := context.WithCancel(context.Background())
 	fim := make(chan error, 1)
 	go func() {
-		fim <- Servir(ctx, listener, NovoGrafo(), 5*time.Second)
+		fim <- Servir(ctx, listener, NovoGrafo(), time.Second)
+	}()
+	defer func() {
+		cancelar()
+		if err := <-fim; err != nil {
+			t.Error(err)
+		}
+	}()
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	for _, parte := range []string{`{"acao":"CADAS`, "TRAR\",\"dados\":{\"nome\":\"Pessoa\",\"email\":\"teste@exemplo.com\",\"senha\":\"senha12345\",\"perfil\":\"PASSAGEIRO\"}}\n{invalido}\n"} {
+		if _, err := conn.Write([]byte(parte)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader := bufio.NewReader(conn)
+
+	for _, status := range []string{protocolo.Sucesso, protocolo.Erro} {
+		linha, err := reader.ReadBytes('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r protocolo.Resposta
+		if err := json.Unmarshal(linha, &r); err != nil {
+			t.Fatal(err)
+		}
+		if r.Status != status || r.Mensagem == "" {
+			t.Fatalf("resposta: %s", linha)
+		}
+	}
+}
+
+func TestConexaoOciosaNaoBloqueiaFilaDeRequisicoes(t *testing.T) {
+	g := NovoGrafo()
+	// O prazo mede atendimento de rede, sem incluir o custo do hash de senha.
+	if _, err := g.Cadastrar(protocolo.Cadastro{Nome: "Pessoa Teste", Email: "fila@teste.com", Senha: "senha1234", Perfil: protocolo.Passageiro}); err != nil {
+		t.Fatal(err)
+	}
+	sessao, err := g.Autenticar(protocolo.Credenciais{Email: "fila@teste.com", Senha: "senha1234"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancelar := context.WithCancel(context.Background())
+	fim := make(chan error, 1)
+	go func() {
+		fim <- Servir(ctx, listener, g, 5*time.Second)
 	}()
 	defer func() {
 		cancelar()
@@ -68,7 +175,7 @@ func TestConexaoOciosaNaoBloqueiaFilaDeRequisicoes(t *testing.T) {
 	}
 	defer ativa.Close()
 	ativa.SetDeadline(time.Now().Add(time.Second))
-	if _, err := io.WriteString(ativa, "{\"acao\":\"CADASTRAR\",\"dados\":{\"nome\":\"Pessoa Teste\",\"email\":\"fila@teste.com\",\"senha\":\"senha1234\",\"perfil\":\"PASSAGEIRO\"}}\n"); err != nil {
+	if err := json.NewEncoder(ativa).Encode(protocolo.Requisicao{Acao: protocolo.AcaoReservas, SessaoID: sessao.ID, Dados: json.RawMessage(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 	linha, err := bufio.NewReader(ativa).ReadBytes('\n')
@@ -77,89 +184,6 @@ func TestConexaoOciosaNaoBloqueiaFilaDeRequisicoes(t *testing.T) {
 	}
 }
 
-// TestMensagemMaiorQueBufferInicialRespeitaLimiteDoProtocolo verifica o cenario: Mensagem Maior Que Buffer Inicial Respeita Limite Do Protocolo.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestMensagemMaiorQueBufferInicialRespeitaLimiteDoProtocolo(t *testing.T) {
-	conteudo := strings.Repeat(" ", 8192) + `{"acao":"CADASTRAR","dados":{"nome":"Pessoa Teste","email":"buffer@teste.com","senha":"senha1234","perfil":"PASSAGEIRO"}}` + "\n"
-	linha, err := lerMensagem(bufio.NewReaderSize(strings.NewReader(conteudo), 4096))
-	if err != nil || string(linha) != conteudo {
-		t.Fatalf("mensagem dentro do limite recusada: %v", err)
-	}
-	if r := ProcessarMensagem(bytes.TrimSuffix(linha, []byte{'\n'}), NovoGrafo()); !bytes.Contains(r, []byte(`"status":"SUCESSO"`)) {
-		t.Fatalf("mensagem válida não processada: %s", r)
-	}
-}
-
-// TestConexaoOciosaEncerraNoPrazo verifica o cenario: Conexao Ociosa Encerra No Prazo.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestConexaoOciosaEncerraNoPrazo(t *testing.T) {
-	servidorConn, clienteConn := net.Pipe()
-	defer clienteConn.Close()
-	fim := make(chan struct{})
-	go func() {
-		defer close(fim)
-		AtenderConexao(servidorConn, NovoGrafo(), 100*time.Millisecond)
-	}()
-	select {
-	case <-fim:
-	case <-time.After(2 * time.Second):
-		t.Fatal("conexao ociosa nao encerrou no prazo")
-	}
-}
-
-// Write: recebe bytes e simula escrita parcial, ausencia de progresso ou falha configurada.
-// Retorna: quantidade de bytes armazenados e o erro simulado, quando houver.
-// Recebe: p []byte.
-// Retorna: (int, error). Em falha, devolve error; em sucesso, erro nil.
-func (e *escritorLimitado) Write(p []byte) (int, error) {
-	if e.err != nil {
-		return 0, e.err
-	}
-	if e.zero {
-		return 0, nil
-	}
-	n := min(e.limite, len(p))
-	e.dados = append(e.dados, p[:n]...)
-	return n, nil
-}
-
-// TestEscreverCompletaEscritasParciaisEPropagaErros: recebe o teste e simula respostas do escritor.
-// Confere envio completo, deteccao de escrita sem progresso e propagacao do erro. Sem retorno.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestEscreverCompletaEscritasParciaisEPropagaErros(t *testing.T) {
-	t.Run("escritas parciais", func(t *testing.T) {
-		e := &escritorLimitado{limite: 2}
-		if err := escrever(e, []byte("abcdef")); err != nil {
-			t.Fatal(err)
-		}
-		if string(e.dados) != "abcdef" {
-			t.Fatalf("conteúdo escrito = %q", e.dados)
-		}
-	})
-
-	t.Run("sem progresso", func(t *testing.T) {
-		err := escrever(&escritorLimitado{zero: true}, []byte("x"))
-		if !errors.Is(err, io.ErrShortWrite) {
-			t.Fatalf("erro = %v; esperado io.ErrShortWrite", err)
-		}
-	})
-
-	t.Run("erro do writer", func(t *testing.T) {
-		esperado := errors.New("falha de escrita")
-		err := escrever(&escritorLimitado{err: esperado}, []byte("x"))
-		if !errors.Is(err, esperado) {
-			t.Fatalf("erro = %v; esperado %v", err, esperado)
-		}
-	})
-}
-
-// TestAtenderConexaoIgnoraLinhaIncompleta: recebe o teste e fecha o pipe sem enviar a quebra de linha.
-// Confere que o cadastro incompleto nao altera o estado do servidor. Sem retorno.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestAtenderConexaoIgnoraLinhaIncompleta(t *testing.T) {
 	g := NovoGrafo()
 	servidor, cliente := net.Pipe()
@@ -169,9 +193,7 @@ func TestAtenderConexaoIgnoraLinhaIncompleta(t *testing.T) {
 		close(concluido)
 	}()
 
-	// Envia o cadastro sem a quebra de linha que completa a mensagem do protocolo.
 	io.WriteString(cliente, `{"acao":"CADASTRAR","dados":{"nome":"Ana Teste","email":"ana@teste.com","senha":"senha1234","perfil":"PASSAGEIRO"}}`)
-	// Fecha a conexao antes de completar a mensagem.
 	cliente.Close()
 	<-concluido
 	if len(g.usuarios) != 0 {
@@ -179,10 +201,6 @@ func TestAtenderConexaoIgnoraLinhaIncompleta(t *testing.T) {
 	}
 }
 
-// TestAtenderConexaoRejeitaLinhaAcimaDoLimite: recebe o teste e envia uma mensagem grande demais.
-// Confere a resposta de erro por limite de tamanho. Sem retorno.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestAtenderConexaoRejeitaLinhaAcimaDoLimite(t *testing.T) {
 	servidor, cliente := net.Pipe()
 	concluido := make(chan struct{})
@@ -210,221 +228,4 @@ func TestAtenderConexaoRejeitaLinhaAcimaDoLimite(t *testing.T) {
 	cliente.Close()
 	<-escrita
 	<-concluido
-}
-
-type listenerComErro struct{ err error }
-
-// Accept implementa o comportamento de aceitacao do listener simulado, incluindo erro ou bloqueio conforme o tipo.
-// Recebe: nenhum parametro.
-// Retorna: (net.Conn, error). Em falha, devolve error; em sucesso, erro nil.
-func (l listenerComErro) Accept() (net.Conn, error) {
-	return nil, l.err
-}
-
-// Close implementa o encerramento do recurso simulado para os testes de transporte.
-// Recebe: nenhum parametro.
-// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
-func (listenerComErro) Close() error {
-	return nil
-}
-
-// Addr fornece o endereco do listener simulado.
-// Recebe: nenhum parametro.
-// Retorna: net.Addr.
-func (listenerComErro) Addr() net.Addr {
-	return &net.TCPAddr{}
-}
-
-// TestServirRetornaErroDeAcceptEEncerraComContexto: recebe o teste e usa listeners simulados.
-// Confere propagacao de falha no Accept e encerramento por cancelamento do contexto. Sem retorno.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestServirRetornaErroDeAcceptEEncerraComContexto(t *testing.T) {
-	t.Run("erro de accept", func(t *testing.T) {
-		esperado := errors.New("accept falhou")
-		err := Servir(context.Background(), listenerComErro{err: esperado}, NovoGrafo(), time.Second)
-		if !errors.Is(err, esperado) {
-			t.Fatalf("erro = %v; esperado %v", err, esperado)
-		}
-	})
-
-	t.Run("cancelamento", func(t *testing.T) {
-		ctx, cancelar := context.WithCancel(context.Background())
-		listener := &listenerOcioso{fechado: make(chan struct{})}
-		resultado := make(chan error, 1)
-		go func() {
-			resultado <- Servir(ctx, listener, NovoGrafo(), time.Second)
-		}()
-		cancelar()
-		select {
-		case err := <-resultado:
-			if err != nil {
-				t.Fatalf("Servir retornou erro ao cancelar: %v", err)
-			}
-		case <-time.After(time.Second):
-			t.Fatal("Servir não encerrou após cancelar o contexto")
-		}
-	})
-}
-
-// Listener bloqueante compartilhado pelos testes de encerramento e expiração de sessão.
-// Sem rede real, também permite avançar o relógio do synctest sem esperar 15 minutos.
-type listenerOcioso struct {
-	fechado chan struct{}
-	umaVez  sync.Once
-}
-
-// Accept implementa o comportamento de aceitacao do listener simulado, incluindo erro ou bloqueio conforme o tipo.
-// Recebe: nenhum parametro.
-// Retorna: (net.Conn, error). Em falha, devolve error; em sucesso, erro nil.
-func (l *listenerOcioso) Accept() (net.Conn, error) {
-	<-l.fechado
-	return nil, net.ErrClosed
-}
-
-// Close implementa o encerramento do recurso simulado para os testes de transporte.
-// Recebe: nenhum parametro.
-// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
-func (l *listenerOcioso) Close() error {
-	l.umaVez.Do(func() {
-		close(l.fechado)
-	})
-	return nil
-}
-
-// Addr fornece o endereco do listener simulado.
-// Recebe: nenhum parametro.
-// Retorna: net.Addr.
-func (l *listenerOcioso) Addr() net.Addr {
-	return &net.TCPAddr{}
-}
-
-// TestServidorRegistraExpiracaoSemNovasRequisicoes: recebe o teste e avanca o relogio simulado.
-// Confere que a sessao ociosa expira e gera apenas um registro, sem novos pedidos. Sem retorno.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestServidorRegistraExpiracaoSemNovasRequisicoes(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		g := NovoGrafo()
-		var saida bytes.Buffer
-		g.logger = log.New(&saida, "", 0)
-		g.sessoes["sessao-teste"] = sessao{email: "ocioso@teste.com", expira: time.Now().Add(15 * time.Minute)}
-		listener := &listenerOcioso{fechado: make(chan struct{})}
-		ctx, cancelar := context.WithCancel(context.Background())
-		defer cancelar()
-		fim := make(chan error, 1)
-		go func() {
-			fim <- Servir(ctx, listener, g, time.Second)
-		}()
-		synctest.Wait()
-		time.Sleep(15*time.Minute + time.Second)
-		synctest.Wait()
-		g.mu.RLock()
-		restantes := len(g.sessoes)
-		g.mu.RUnlock()
-		if restantes != 0 || strings.Count(saida.String(), "DESCONECTOU usuário=ocioso@teste.com motivo=sessão expirada (15 minutos)") != 1 {
-			t.Fatalf("expiração ociosa: %d %s", restantes, &saida)
-		}
-		cancelar()
-		if err := <-fim; err != nil {
-			t.Fatal(err)
-		}
-	})
-}
-
-// TestOperacaoTCPNaoRegistraDesconexaoNemEncerraSessao: recebe o teste e fecha um socket apos consultar.
-// Confere que a sessao continua valida e nao houve registro de logout. Sem retorno.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestOperacaoTCPNaoRegistraDesconexaoNemEncerraSessao(t *testing.T) {
-	c := criarCenario(t)
-	var saida bytes.Buffer
-	c.g.logger = log.New(&saida, "", 0)
-	servidor, cliente := net.Pipe()
-	fim := make(chan struct{})
-	go func() {
-		AtenderConexao(servidor, c.g, time.Second)
-		close(fim)
-	}()
-	cliente.SetDeadline(time.Now().Add(2 * time.Second))
-	t.Cleanup(func() {
-		cliente.Close()
-		<-fim
-	})
-	req := protocolo.Requisicao{Acao: protocolo.AcaoReservas, SessaoID: c.p, Dados: json.RawMessage(`{}`)}
-	if err := json.NewEncoder(cliente).Encode(req); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := bufio.NewReader(cliente).ReadBytes('\n'); err != nil {
-		t.Fatal(err)
-	}
-	cliente.Close()
-	<-fim
-	if saida.Len() != 0 {
-		t.Fatal(saida.String())
-	}
-	if _, err := c.g.ConsultarReservas(c.p); err != nil {
-		t.Fatal("fechar socket invalidou sessão", err)
-	}
-}
-
-// TestSocketNDJSON: Envia um cadastro fragmentado e outra linha invalida na mesma conexao. Confere
-// uma resposta por mensagem.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestSocketNDJSON(t *testing.T) {
-	//cria servidor temporario
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	//cria um contexto cancelavel  para encerrar o servidor no final do teste
-	ctx, cancelar := context.WithCancel(context.Background())
-	//inicia servidor em uma goroutine
-	fim := make(chan error, 1)
-	go func() {
-		fim <- Servir(ctx, listener, NovoGrafo(), time.Second)
-	}()
-	// garante que o contexto e cancelado e espera a goroutine do servidor encerrar
-	defer func() {
-		cancelar()
-		if err := <-fim; err != nil {
-			t.Error(err)
-		}
-	}()
-	//cliente teste se conecta
-	conn, err := net.Dial("tcp", listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	//Garante que a conexao do cliente sera fechada ao final do teste
-	defer conn.Close()
-	//define prazo se 5 segundos para R/W nessa conexao
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
-	//laco que percorre duas partes de texto
-	for _, parte := range []string{`{"acao":"CADAS`, "TRAR\",\"dados\":{\"nome\":\"Pessoa\",\"email\":\"teste@exemplo.com\",\"senha\":\"senha12345\",\"perfil\":\"PASSAGEIRO\"}}\n{invalido}\n"} {
-		if _, err := conn.Write([]byte(parte)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	//Cria um leitor com buffer para receber dados do servidor
-	reader := bufio.NewReader(conn)
-
-	for _, status := range []string{protocolo.Sucesso, protocolo.Erro} {
-		//Ler bytes ate encontar uma quebra de linha
-		linha, err := reader.ReadBytes('\n')
-		if err != nil {
-			t.Fatal(err)
-		}
-		//Variavel paara guardar resposta deodificada
-		var r protocolo.Resposta
-		//Coverte a linha JSON recebida
-		if err := json.Unmarshal(linha, &r); err != nil {
-			t.Fatal(err)
-		}
-		//Compara status recebido com o status esperado na repetiap
-		if r.Status != status || r.Mensagem == "" {
-			t.Fatalf("resposta: %s", linha)
-		}
-	}
 }

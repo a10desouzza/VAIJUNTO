@@ -1,16 +1,5 @@
-// Arquivo: internal/servidor/backup.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Grava o estado privado da empresa para recuperá-lo após a queda do processo.
-// Inclui dados locais, preparações e registros necessários para preservar o consenso.
-// Valida o conteúdo na restauração e sincroniza um temporário antes de substituir o arquivo.
-// Cada empresa usa seu próprio arquivo; o backup não é um armazenamento compartilhado.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package servidor
 
 import (
@@ -21,14 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
-
 	"vaijunto/internal/protocolo"
 )
 
-// O arquivo pertence a uma empresa. Ele guarda o estado local e as promessas
-// dessa testemunha, sem copiar cadastros ou ofertas das outras empresas.
 type backupLocal struct {
 	mu      sync.Mutex
 	caminho string
@@ -96,11 +83,7 @@ type consorcioBackup struct {
 	Origens   map[string]*operacaoOrigem   `json:"origens"`
 }
 
-// AbrirBackup deve ser chamado antes de abrir os atendimentos e a recuperacao.
-// Caminho vazio desativa a persistencia. Uma copia invalida nunca e descartada
 // silenciosamente reiniciar sem as promessas antigas permitiria votos conflitantes.
-// Recebe: empresa, caminho string.
-// Retorna: nil se o arquivo foi restaurado/criado ou a persistencia estiver desativada; erro se leitura, validacao ou gravacao falhar.
 func (g *GrafoItinerarios) AbrirBackup(empresa, caminho string) error {
 	if caminho == "" {
 		return nil
@@ -138,8 +121,6 @@ func (g *GrafoItinerarios) AbrirBackup(empresa, caminho string) error {
 // SalvarBackup grava e sincroniza um temporario antes de substituir o arquivo.
 // O sucesso de uma escrita so e respondido depois dessa etapa. A trava do backup
 // impede que uma gravacao antiga sobrescreva uma fotografia mais recente.
-// Recebe: nenhum parametro.
-// Retorna: nil depois do checkpoint ou se desativado; erro de captura ou gravacao impede confirmar sucesso ao cliente.
 func (g *GrafoItinerarios) SalvarBackup() error {
 	b := g.backup
 	if b == nil {
@@ -162,16 +143,12 @@ func (g *GrafoItinerarios) SalvarBackup() error {
 }
 
 // hashBytes calcula o checksum SHA-256 dos bytes do estado salvo.
-// Recebe: conteudo []byte.
-// Retorna: string.
 func hashBytes(conteudo []byte) string {
 	hash := sha256.Sum256(conteudo)
 	return hex.EncodeToString(hash[:])
 }
 
 // fotografarEstado captura dados locais e votos sob as travas de leitura do estado.
-// Recebe: nenhum parametro.
-// Retorna: os bytes JSON de uma fotografia consistente ou erro de serializacao.
 func (g *GrafoItinerarios) fotografarEstado() ([]byte, error) {
 	d := g.distribuido
 	if d != nil {
@@ -210,8 +187,6 @@ func (g *GrafoItinerarios) fotografarEstado() ([]byte, error) {
 }
 
 // restaurarBackup valida as referencias antes de remontar os mapas e o protocolo.
-// Recebe: e estadoBackup.
-// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func (g *GrafoItinerarios) restaurarBackup(e estadoBackup) error {
 	if e.Usuarios == nil || e.Caronas == nil || e.Trechos == nil || e.Reservas == nil || e.Chaves == nil || e.Transacoes == nil || e.Notificacoes == nil {
 		return fmt.Errorf("backup incompleto")
@@ -249,6 +224,20 @@ func (g *GrafoItinerarios) restaurarBackup(e estadoBackup) error {
 		}
 	}
 	for email, c := range e.Usuarios {
+		// Backups antigos sao convertidos e regravados por AbrirBackup.
+		if !strings.HasPrefix(c.Senha, "pbkdf2-sha256$") {
+			if err := protocolo.ValidarSenha(c.Senha); err != nil {
+				return fmt.Errorf("senha legada invalida: %w", err)
+			}
+			hash, err := protegerSenha(c.Senha)
+			if err != nil {
+				return err
+			}
+			c.Senha = hash
+		}
+		if _, _, err := decodificarSenha(c.Senha); err != nil {
+			return err
+		}
 		g.usuarios[email] = conta{c.Usuario, c.Senha}
 	}
 	for id, o := range e.Caronas {
@@ -275,8 +264,6 @@ func (g *GrafoItinerarios) restaurarBackup(e estadoBackup) error {
 }
 
 // substituirArquivo conserva o arquivo atual ate a nova gravacao estar sincronizada.
-// Recebe: caminho string, conteudo []byte.
-// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func substituirArquivo(caminho string, conteudo []byte) error {
 	pasta := filepath.Dir(caminho)
 	if err := os.MkdirAll(pasta, 0700); err != nil {

@@ -1,15 +1,5 @@
-// Arquivo: internal/servidor/tcp.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Aceita conexões TCP e delimita as mensagens JSON pela quebra de linha.
-// Controla prazos, tamanho das mensagens e envio completo das respostas.
-// Leitores de rede encaminham pedidos ao executor para que conexões ociosas não o bloqueiem.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package servidor
 
 import (
@@ -21,15 +11,12 @@ import (
 	"net"
 	"sync"
 	"time"
-
 	"vaijunto/internal/protocolo"
 )
 
 // AtenderConexao Le ate a quebra de linha e processa somente mensagens completas. Renova os
 // prazos de rede, envia cada resposta e aceita a proxima linha. Uma linha incompleta nao executa a
 // operacao; falhar ao enviar a resposta nao desfaz uma operacao que ja foi concluida.
-// Recebe: conn net.Conn, g *GrafoItinerarios, timeout time.Duration.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func AtenderConexao(conn net.Conn, g *GrafoItinerarios, timeout time.Duration) {
 	atenderConexao(conn, timeout, func(mensagem []byte) []byte {
 		g.limparSessoesExpiradas()
@@ -38,8 +25,6 @@ func AtenderConexao(conn net.Conn, g *GrafoItinerarios, timeout time.Duration) {
 }
 
 // atenderConexao le mensagens NDJSON completas, chama o processador e envia respostas ate ocorrer falha ou encerramento; fecha a conexao ao sair.
-// Recebe: conn net.Conn, timeout time.Duration, processar func([]byte) []byte.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func atenderConexao(conn net.Conn, timeout time.Duration, processar func([]byte) []byte) {
 	defer conn.Close()
 	if timeout <= 0 {
@@ -72,8 +57,6 @@ func atenderConexao(conn net.Conn, timeout time.Duration, processar func([]byte)
 
 // lerMensagem acumula somente quando a linha ultrapassa o buffer inicial.
 // Mantem o limite de 1 MiB e nunca executa uma linha incompleta.
-// Recebe: leitor *bufio.Reader.
-// Retorna: a linha recebida e eventual erro de leitura/limite; o chamador nao deve processar linha incompleta.
 func lerMensagem(leitor *bufio.Reader) ([]byte, error) {
 	var linha []byte
 	for {
@@ -94,8 +77,6 @@ func lerMensagem(leitor *bufio.Reader) ([]byte, error) {
 
 // escrever repete Write quando apenas parte do buffer foi enviada, ate transmitir todos os bytes
 // ou falhar.
-// Recebe: w io.Writer, b []byte.
-// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func escrever(w io.Writer, b []byte) error {
 	for len(b) > 0 {
 		n, err := w.Write(b)
@@ -112,8 +93,6 @@ func escrever(w io.Writer, b []byte) error {
 
 // Servir separa o transporte da execucao: leitores aguardam os sockets e um
 // trabalhador processa as mensagens. Uma conexao ociosa nao ocupa esse trabalhador.
-// Recebe: ctx context.Context, listener net.Listener, g *GrafoItinerarios, timeout time.Duration.
-// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func Servir(ctx context.Context, listener net.Listener, g *GrafoItinerarios, timeout time.Duration) error {
 	ctx, cancelar := context.WithCancel(ctx)
 	defer cancelar()
@@ -190,4 +169,75 @@ func Servir(ctx context.Context, listener net.Listener, g *GrafoItinerarios, tim
 			})
 		}()
 	}
+}
+
+type requisicaoNaFila struct {
+	mensagem []byte
+	resposta chan []byte
+}
+
+// As duas filas compartilham um trabalhador. Alternar a preferencia impede que
+// consultas continuas deixem as escritas esperando, ou vice-versa.
+type filaRequisicoes struct {
+	leituras chan requisicaoNaFila
+	escritas chan requisicaoNaFila
+}
+
+// novaFila cria duas filas com capacidade de 128 mensagens cada.
+func novaFila() *filaRequisicoes {
+	return &filaRequisicoes{
+		leituras: make(chan requisicaoNaFila, 128),
+		escritas: make(chan requisicaoNaFila, 128),
+	}
+}
+
+// executar enfileira uma mensagem completa e espera apenas a resposta dela.
+func (f *filaRequisicoes) executar(ctx context.Context, mensagem []byte) []byte {
+	fila := f.escritas
+	if mensagemDeConsulta(mensagem) {
+		fila = f.leituras
+	}
+	pedido := requisicaoNaFila{mensagem: mensagem, resposta: make(chan []byte, 1)}
+	select {
+	case <-ctx.Done():
+		return respostaOcupado("Servidor encerrando.")
+	case fila <- pedido:
+	default:
+		return respostaOcupado("Fila cheia; tente novamente com a mesma chave.")
+	}
+	select {
+	case resposta := <-pedido.resposta:
+		return resposta
+	case <-ctx.Done():
+		return respostaOcupado("Servidor encerrando; consulte o resultado ao reconectar.")
+	}
+}
+
+// atender e o unico trabalhador das mensagens TCP, alternando leituras e escritas.
+func (f *filaRequisicoes) atender(ctx context.Context, g *GrafoItinerarios) {
+	preferida, outra := f.leituras, f.escritas
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		var pedido requisicaoNaFila
+		select {
+		case pedido = <-preferida:
+		default:
+			select {
+			case <-ctx.Done():
+				return
+			case pedido = <-preferida:
+			case pedido = <-outra:
+			}
+		}
+		g.limparSessoesExpiradas()
+		pedido.resposta <- ProcessarMensagem(pedido.mensagem, g)
+		preferida, outra = outra, preferida
+	}
+}
+
+// respostaOcupado codifica uma resposta de erro para sobrecarga ou encerramento do servidor.
+func respostaOcupado(mensagem string) []byte {
+	return codificarResposta(protocolo.Resposta{Status: protocolo.Erro, Mensagem: mensagem})
 }

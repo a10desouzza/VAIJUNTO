@@ -1,15 +1,5 @@
-// Arquivo: internal/consorcio/rest.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Publica o catálogo de trechos disponíveis da própria empresa por API REST.
-// Consulta os catálogos dos pares em paralelo e identifica empresas sem resposta.
-// Esses resultados alimentam a busca distribuída sem manter uma base remota replicada.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package consorcio
 
 import (
@@ -23,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 	"vaijunto/internal/configuracao"
 	"vaijunto/internal/protocolo"
 )
@@ -64,8 +53,6 @@ type API struct {
 }
 
 // NovaAPI configura identidade, token, pares e fonte local; rejeita configuracoes invalidas.
-// Recebe: id, token string, empresas []configuracao.Empresa, fonte Fonte, timeout time.Duration.
-// Retorna: a API de catalogos configurada ou erro de configuracao; nao abre a escuta HTTP.
 func NovaAPI(id, token string, empresas []configuracao.Empresa, fonte Fonte, timeout time.Duration) (*API, error) {
 	if err := configuracao.ValidarEmpresaID(id); err != nil {
 		return nil, err
@@ -83,8 +70,6 @@ func NovaAPI(id, token string, empresas []configuracao.Empresa, fonte Fonte, tim
 }
 
 // local monta o catalogo publico com os trechos disponiveis da propria empresa, sem dados pessoais.
-// Recebe: nenhum parametro.
-// Retorna: Catalogo.
 func (a *API) local() Catalogo {
 	c := Catalogo{EmpresaID: a.id, Trechos: make([]TrechoPublico, 0)}
 	for _, t := range a.fonte.TrechosDisponiveis() {
@@ -94,8 +79,6 @@ func (a *API) local() Catalogo {
 }
 
 // consultar consulta o catalogo REST do par recebido, validando limite da resposta e identidade da empresa.
-// Recebe: ctx context.Context, empresa configuracao.Empresa.
-// Retorna: o resultado da consulta ou erro de acesso/validacao, conforme o recurso deste pacote.
 func (a *API) consultar(ctx context.Context, empresa configuracao.Empresa) (Catalogo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, empresa.URL+"/trechos", nil)
 	if err != nil {
@@ -137,8 +120,6 @@ func (a *API) consultar(ctx context.Context, empresa configuracao.Empresa) (Cata
 
 // ConsultarTodos consulta somente /trechos dos pares, evitando chamadas recursivas.
 // Uma empresa indisponivel nao impede o retorno das ofertas das demais.
-// Recebe: ctx context.Context.
-// Retorna: Consulta.
 func (a *API) ConsultarTodos(ctx context.Context) Consulta {
 	resultado := Consulta{Trechos: a.local().Trechos, Indisponiveis: make([]string, 0)}
 	var wg sync.WaitGroup
@@ -170,16 +151,12 @@ func (a *API) ConsultarTodos(ctx context.Context) Consulta {
 }
 
 // responder define o tipo JSON e escreve a representacao do valor na resposta HTTP.
-// Recebe: w http.ResponseWriter, valor any.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func responder(w http.ResponseWriter, valor any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(valor)
 }
 
 // Handler constroi o atendimento HTTP dos recursos de consulta com autenticacao pelo token do consorcio.
-// Recebe: nenhum parametro.
-// Retorna: um http.Handler que recebe as requisicoes; a escuta e iniciada pelo executavel do servidor.
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /saude", func(w http.ResponseWriter, r *http.Request) {
@@ -202,8 +179,6 @@ func (a *API) Handler() http.Handler {
 }
 
 // AgruparTrechos separa as referencias por dono sem alterar a ordem do pedido.
-// Recebe: pedido protocolo.ReservaDistribuida.
-// Retorna: (map[string][]string, error). Em falha, devolve error; em sucesso, erro nil.
 func AgruparTrechos(pedido protocolo.ReservaDistribuida) (map[string][]string, error) {
 	if strings.TrimSpace(pedido.Chave) == "" || len(pedido.Chave) > 100 {
 		return nil, fmt.Errorf("chave de reserva ausente")

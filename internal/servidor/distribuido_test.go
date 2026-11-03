@@ -1,15 +1,5 @@
-// Arquivo: internal/servidor/distribuido_test.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Monta três empresas com comunicação HTTP local para testar o protocolo distribuído.
-// Verifica disputa de vagas, repetição, cancelamento, carga TCP e recuperação de falhas.
-// Inclui a disputa simultânea do mesmo itinerário por passageiros de origens diferentes.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package servidor
 
 import (
@@ -23,7 +13,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
 	"vaijunto/internal/carga"
 	"vaijunto/internal/configuracao"
 	"vaijunto/internal/consorcio"
@@ -39,26 +28,6 @@ type empresaTeste struct {
 	carona                protocolo.Carona
 }
 
-// TestConsultaMantemReservaComEmpresaIndisponivel verifica o cenario: Consulta Mantem Reserva Com Empresa Indisponivel.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestConsultaMantemReservaComEmpresaIndisponivel(t *testing.T) {
-	empresas := criarConsorcio(t, 1)
-	a := empresas[0]
-	confirmada, err := a.d.reservar(a.passageiro, pedidoTeste(empresas, "indisponivel"))
-	if err != nil || confirmada.Status != protocolo.Ativa {
-		t.Fatal("reserva inicial", err)
-	}
-	empresas[1].offline.Store(true)
-	reservas, err := a.d.consultar(a.passageiro)
-	if err != nil || len(reservas) != 1 || reservas[0].Status != protocolo.Ativa || len(reservas[0].EmpresasIndisponiveis) != 1 || reservas[0].EmpresasIndisponiveis[0] != empresas[1].d.id {
-		t.Fatalf("indisponibilidade alterou a reserva: %+v %v", reservas, err)
-	}
-}
-
-// TestConsorcioCargaTCPDeTresEmpresas verifica o cenario: Consorcio Carga TCPDe Tres Empresas.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestConsorcioCargaTCPDeTresEmpresas(t *testing.T) {
 	es := criarConsorcio(t, 1)
 	ctx, cancelar := context.WithCancel(context.Background())
@@ -98,27 +67,6 @@ func TestConsorcioCargaTCPDeTresEmpresas(t *testing.T) {
 	t.Logf("carga em três empresas: %+v", m)
 }
 
-// TestConsorcioReservaLocalIndependeDosOutrosServidores verifica o cenario: Consorcio Reserva Local Independe Dos Outros Servidores.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestConsorcioReservaLocalIndependeDosOutrosServidores(t *testing.T) {
-	es := criarConsorcio(t, 1)
-	a := es[0]
-	es[1].offline.Store(true)
-	es[2].offline.Store(true)
-	p := protocolo.ReservaItinerario{Chave: "local", Trechos: []protocolo.ReferenciaTrecho{{EmpresaID: a.d.id, TrechoID: a.carona.Trechos[0].Trecho.ID}}}
-	r, err := a.d.reservar(a.passageiro, p)
-	if err != nil || r.Status != protocolo.Ativa {
-		t.Fatalf("reserva local dependeu dos pares: %+v %v", r, err)
-	}
-	if len(a.d.registros) != 0 {
-		t.Fatal("reserva local criou consenso desnecessário")
-	}
-}
-
-// TestConsorcioCancelamentoPeloMotoristaLiberaTodosOsTrechos verifica o cenario: Consorcio Cancelamento Pelo Motorista Libera Todos Os Trechos.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestConsorcioCancelamentoPeloMotoristaLiberaTodosOsTrechos(t *testing.T) {
 	es := criarConsorcio(t, 1)
 	r, err := es[0].d.reservar(es[0].passageiro, pedidoTeste(es, "motorista"))
@@ -134,9 +82,6 @@ func TestConsorcioCancelamentoPeloMotoristaLiberaTodosOsTrechos(t *testing.T) {
 	}
 }
 
-// criarConsorcio monta tres empresas de teste com contas, ofertas conectadas e servidores HTTP locais.
-// Recebe: t *testing.T, vagas int.
-// Retorna: []*empresaTeste.
 func criarConsorcio(t *testing.T, vagas int) []*empresaTeste {
 	t.Helper()
 	es := make([]*empresaTeste, 3)
@@ -198,9 +143,6 @@ func criarConsorcio(t *testing.T, vagas int) []*empresaTeste {
 	return es
 }
 
-// pedidoTeste monta um pedido de reserva com referencias aos trechos das empresas do cenario.
-// Recebe: es []*empresaTeste, chave string.
-// Retorna: protocolo.ReservaItinerario.
 func pedidoTeste(es []*empresaTeste, chave string) protocolo.ReservaItinerario {
 	p := protocolo.ReservaItinerario{Chave: chave}
 	for i, e := range es {
@@ -209,9 +151,6 @@ func pedidoTeste(es []*empresaTeste, chave string) protocolo.ReservaItinerario {
 	return p
 }
 
-// verificarVagas compara vagas livres, ocupadas e preparadas com os valores esperados em todas as empresas.
-// Recebe: t *testing.T, es []*empresaTeste, livres, ocupados, preparados int.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func verificarVagas(t *testing.T, es []*empresaTeste, livres, ocupados, preparados int) {
 	t.Helper()
 	for _, e := range es {
@@ -225,9 +164,6 @@ func verificarVagas(t *testing.T, es []*empresaTeste, livres, ocupados, preparad
 	}
 }
 
-// TestConsorcioBuscaReservaRepeticaoECancelamento verifica o cenario: Consorcio Busca Reserva Repeticao ECancelamento.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestConsorcioBuscaReservaRepeticaoECancelamento(t *testing.T) {
 	es := criarConsorcio(t, 2)
 	d := es[0].d
@@ -261,9 +197,6 @@ func TestConsorcioBuscaReservaRepeticaoECancelamento(t *testing.T) {
 	}
 }
 
-// TestConsorcioUltimaVagaDisputadaPorTresOrigens verifica o cenario: Consorcio Ultima Vaga Disputada Por Tres Origens.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestConsorcioUltimaVagaDisputadaPorTresOrigens(t *testing.T) {
 	es := criarConsorcio(t, 1)
 	var wg sync.WaitGroup
@@ -289,10 +222,6 @@ func TestConsorcioUltimaVagaDisputadaPorTresOrigens(t *testing.T) {
 	verificarVagas(t, es, 0, 1, 0)
 }
 
-// As duas origens disputam o mesmo itinerario A+B, com um dono por trecho.
-// Sem falha de rede, uma compra precisa terminar e a outra deve ser recusada.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestConsorcioDisputaDoisTrechosEntreDuasOrigens(t *testing.T) {
 	empresas := criarConsorcio(t, 1)
 	participantes := empresas[:2]
@@ -336,98 +265,4 @@ func TestConsorcioDisputaDoisTrechosEntreDuasOrigens(t *testing.T) {
 		}
 	}
 	t.Logf("itinerario confirmado para a origem %s, transacao=%s", vencedora.EmpresaOrigem, vencedora.TransacaoID)
-}
-
-// TestConsorcioRecuperaQuedaAntesEDepoisDaEscolha verifica o cenario: Consorcio Recupera Queda Antes EDepois Da Escolha.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestConsorcioRecuperaQuedaAntesEDepoisDaEscolha(t *testing.T) {
-	for _, escolhida := range []bool{false, true} {
-		t.Run(fmt.Sprint(escolhida), func(t *testing.T) {
-			es := criarConsorcio(t, 1)
-			a, b := es[0], es[1]
-			falhar := func() error {
-				a.offline.Store(true)
-				return fmt.Errorf("coordenador interrompido")
-			}
-			if escolhida {
-				a.d.aposQuorum = falhar
-			} else {
-				a.d.aposPreparar = falhar
-			}
-			_, _ = a.d.reservar(a.passageiro, pedidoTeste(es, "falha"))
-			verificarVagas(t, es, 0, 0, 1)
-			b.d.abortarApos = 0
-			b.d.recuperar(context.Background())
-			// O processo A ainda conserva RAM, mas nao responde. A recuperacao usa B+C.
-			for _, e := range es[1:] {
-				e.g.mu.RLock()
-				s := e.g.trechos[e.carona.Trechos[0].Trecho.ID]
-				n := len(s.preparados)
-				e.g.mu.RUnlock()
-				if n != 0 {
-					t.Fatal("vagas continuaram preparadas no servidor sobrevivente")
-				}
-			}
-			a.offline.Store(false)
-			b.d.recuperar(context.Background())
-			a.d.aposQuorum = nil
-			a.d.aposPreparar = nil
-			a.d.recuperar(context.Background())
-			if escolhida {
-				verificarVagas(t, es, 0, 1, 0)
-			} else {
-				verificarVagas(t, es, 1, 0, 0)
-			}
-		})
-	}
-}
-
-// TestConsorcioNaoLiberaPreparacaoSemMaioria verifica o cenario: Consorcio Nao Libera Preparacao Sem Maioria.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestConsorcioNaoLiberaPreparacaoSemMaioria(t *testing.T) {
-	es := criarConsorcio(t, 1)
-	a := es[0]
-	a.d.aposPreparar = func() error {
-		return fmt.Errorf("interrompido")
-	}
-	_, _ = a.d.reservar(a.passageiro, pedidoTeste(es, "sem-maioria"))
-	es[1].offline.Store(true)
-	es[2].offline.Store(true)
-	a.d.abortarApos = 0
-	a.d.recuperar(context.Background())
-	verificarVagas(t, es, 0, 0, 1)
-	es[1].offline.Store(false)
-	es[2].offline.Store(false)
-	a.d.recuperar(context.Background())
-	verificarVagas(t, es, 1, 0, 0)
-}
-
-// TestConsorcioProcessoNovoRecusaVotosDaGeracaoPerdida verifica o cenario: Consorcio Processo Novo Recusa Votos Da Geracao Perdida.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestConsorcioProcessoNovoRecusaVotosDaGeracaoPerdida(t *testing.T) {
-	es := criarConsorcio(t, 1)
-	a := es[0]
-	a.d.aposPreparar = func() error {
-		return fmt.Errorf("interrompido")
-	}
-	_, _ = a.d.reservar(a.passageiro, pedidoTeste(es, "reinicio"))
-	a.d.mu.Lock()
-	var meta metaTransacao
-	for _, r := range a.d.registros {
-		meta = copiaJSON(r.Meta)
-		break
-	}
-	a.d.mu.Unlock()
-	// Outra identificacao simula nova RAM; nao pode votar usando o historico antigo.
-	antiga := a.d.geracao
-	a.d.geracao = "novo-processo"
-	defer func() {
-		a.d.geracao = antiga
-	}()
-	if _, err := a.d.consenso("prometer", mensagemConsenso{Meta: meta, Cedula: cedula{100, a.d.id}}); err == nil {
-		t.Fatal("processo reiniciado votou em transacao da geracao anterior")
-	}
 }

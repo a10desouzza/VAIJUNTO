@@ -1,30 +1,20 @@
-// Arquivo: internal/servidor/roteador.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Interpreta o envelope JSON recebido e identifica a ação solicitada pelo cliente.
-// Rejeita mensagens inválidas e converte os dados para o tipo esperado pela operação.
-// Encaminha a chamada, salva alterações e produz a resposta padronizada de sucesso ou erro.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package servidor
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 	"unicode/utf8"
-
+	"vaijunto/internal/configuracao"
 	"vaijunto/internal/protocolo"
 )
 
 // verificarJSON percorre objetos e listas para rejeitar chaves duplicadas, inclusive nos dados
 // internos.
-// Recebe: d *json.Decoder.
-// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func verificarJSON(d *json.Decoder) error {
 	elemento, err := d.Token()
 	if err != nil {
@@ -66,8 +56,6 @@ func verificarJSON(d *json.Decoder) error {
 
 // decodificar exige um unico objeto JSON UTF-8, rejeita campos desconhecidos e preenche alvo ou
 // retorna erro.
-// Recebe: dados []byte, alvo any.
-// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func decodificar(dados []byte, alvo any) error {
 	dados = bytes.TrimSpace(dados)
 	if len(dados) == 0 || dados[0] != '{' || !utf8.Valid(dados) || !json.Valid(dados) {
@@ -83,8 +71,6 @@ func decodificar(dados []byte, alvo any) error {
 }
 
 // ProcessarMensagem transforma o resultado da operacao em uma resposta padrao de SUCESSO ou ERRO.
-// Recebe: mensagem []byte, g *GrafoItinerarios.
-// Retorna: a resposta JSON padronizada em bytes, terminada por quebra de linha, inclusive para operacoes recusadas.
 func ProcessarMensagem(mensagem []byte, g *GrafoItinerarios) []byte {
 	dados, err := processar(mensagem, g)
 	if !mensagemDeConsulta(mensagem) {
@@ -101,8 +87,6 @@ func ProcessarMensagem(mensagem []byte, g *GrafoItinerarios) []byte {
 
 // Consultas nao gravam o arquivo. Uma mensagem desconhecida segue pela fila de
 // escrita para nunca classificar uma alteracao como leitura por engano.
-// Recebe: mensagem []byte.
-// Retorna: bool.
 func mensagemDeConsulta(mensagem []byte) bool {
 	var req protocolo.Requisicao
 	if json.Unmarshal(mensagem, &req) != nil {
@@ -118,8 +102,6 @@ func mensagemDeConsulta(mensagem []byte) bool {
 
 // processar le o envelope e chama a funcao da acao. Cada operacao possui seu proprio tipo de
 // dados.
-// Recebe: mensagem []byte, g *GrafoItinerarios.
-// Retorna: (any, error). Em falha, devolve error; em sucesso, erro nil.
 func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 	if len(mensagem) >= protocolo.LimiteMensagem {
 		return nil, fmt.Errorf("mensagem excede o limite de 1 MiB")
@@ -215,12 +197,66 @@ func processar(mensagem []byte, g *GrafoItinerarios) (any, error) {
 }
 
 // codificarResposta serializa a resposta e acrescenta a quebra de linha exigida pelo protocolo.
-// Recebe: r protocolo.Resposta.
-// Retorna: []byte.
 func codificarResposta(r protocolo.Resposta) []byte {
 	dados, err := json.Marshal(r)
 	if err != nil {
 		return []byte("{\"status\":\"ERRO\",\"mensagem\":\"Falha ao codificar resposta.\"}\n")
 	}
 	return append(dados, '\n')
+}
+
+// validarPreparacao valida identidade, participantes, horario e lista de trechos do pedido de preparacao.
+func validarPreparacao(pedido protocolo.PedidoPreparacao) error {
+	if strings.TrimSpace(pedido.TransacaoID) == "" || len(pedido.TransacaoID) > 128 {
+		return fmt.Errorf("transacao invalida")
+	}
+
+	if err := configuracao.ValidarEmpresaID(pedido.EmpresaOrigem); err != nil {
+		return err
+	}
+
+	if strings.TrimSpace(pedido.PassageiroRef) == "" || len(pedido.PassageiroRef) > 128 {
+		return fmt.Errorf("referencia de passageiro invalida")
+	}
+	if pedido.InicioItinerario != "" {
+		if _, err := time.Parse(time.RFC3339, pedido.InicioItinerario); err != nil {
+			return fmt.Errorf("início do itinerário inválido")
+		}
+	}
+
+	if len(pedido.Participantes) == 0 {
+		return fmt.Errorf("nenhum participante informado")
+	}
+
+	participantes := make(map[string]bool)
+
+	for _, empresa := range pedido.Participantes {
+		if err := configuracao.ValidarEmpresaID(empresa); err != nil {
+			return err
+		}
+
+		if participantes[empresa] {
+			return fmt.Errorf("empresa %s informada mais de uma vez", empresa)
+		}
+		participantes[empresa] = true
+	}
+
+	if len(pedido.TrechosIDs) < 1 || len(pedido.TrechosIDs) > 20 {
+		return fmt.Errorf("informe de 1 a 20 trechos locais")
+	}
+	trechos := make(map[string]bool)
+
+	for _, id := range pedido.TrechosIDs {
+		if strings.TrimSpace(id) == "" {
+			return fmt.Errorf("trecho invalido")
+		}
+
+		if trechos[id] {
+			return fmt.Errorf("trecho %s informado mais de uma vez", id)
+		}
+
+		trechos[id] = true
+	}
+
+	return nil
 }

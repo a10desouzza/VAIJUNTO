@@ -1,15 +1,5 @@
-// Arquivo: internal/servidor/backup_test.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Testa a gravação e a restauração do estado privado da empresa.
-// Verifica recuperação nas fases preparada, decidida e confirmada e preservação das chaves.
-// Também cobre arquivo corrompido e falha de gravação antes da resposta de sucesso.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package servidor
 
 import (
@@ -24,15 +14,11 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
 	"vaijunto/internal/configuracao"
 	"vaijunto/internal/consorcio"
 	"vaijunto/internal/protocolo"
 )
 
-// TestBackupRecuperaReservaLocalEChave verifica o cenario: Backup Recupera Reserva Local EChave.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestBackupRecuperaReservaLocalEChave(t *testing.T) {
 	c := criarCenario(t)
 	caminho := filepath.Join(t.TempDir(), "empresa.json")
@@ -67,9 +53,6 @@ func TestBackupRecuperaReservaLocalEChave(t *testing.T) {
 	}
 }
 
-// TestBackupDanificadoNaoEApagado verifica o cenario: Backup Danificado Nao EApagado.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestBackupDanificadoNaoEApagado(t *testing.T) {
 	caminho := filepath.Join(t.TempDir(), "empresa.json")
 	conteudo := []byte(`{"versao":1,"estado":`)
@@ -85,16 +68,12 @@ func TestBackupDanificadoNaoEApagado(t *testing.T) {
 	}
 }
 
-// TestBackupNaoRespondeSucessoQuandoDiscoFalha verifica o cenario: Backup Nao Responde Sucesso Quando Disco Falha.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestBackupNaoRespondeSucessoQuandoDiscoFalha(t *testing.T) {
 	g := NovoGrafo()
 	pasta := t.TempDir()
 	if err := g.AbrirBackup("local", filepath.Join(pasta, "estado.json")); err != nil {
 		t.Fatal(err)
 	}
-	// Um diretorio como destino impede a substituicao do arquivo em qualquer SO.
 	g.backup.caminho = pasta
 	mensagem := []byte(`{"acao":"CADASTRAR","dados":{"nome":"Pessoa Teste","email":"disco@teste.com","senha":"senha1234","perfil":"PASSAGEIRO"}}`)
 	var resposta protocolo.Resposta
@@ -103,9 +82,6 @@ func TestBackupNaoRespondeSucessoQuandoDiscoFalha(t *testing.T) {
 	}
 }
 
-// TestBackupRecuperaConsorcioAposReinicio verifica o cenario: Backup Recupera Consorcio Apos Reinicio.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestBackupRecuperaConsorcioAposReinicio(t *testing.T) {
 	for _, fase := range []string{"preparada", "escolhida", "confirmada"} {
 		t.Run(fase, func(t *testing.T) {
@@ -133,8 +109,6 @@ func TestBackupRecuperaConsorcioAposReinicio(t *testing.T) {
 			if fase == "confirmada" && err != nil {
 				t.Fatal(err)
 			}
-			// Descarta todos os grafos e protocolos. Os novos processos recebem somente
-			// a configuracao e o arquivo privado da respectiva empresa.
 			for _, e := range empresas {
 				e.http.Close()
 			}
@@ -174,9 +148,6 @@ func TestBackupRecuperaConsorcioAposReinicio(t *testing.T) {
 	}
 }
 
-// reiniciarEmpresaComBackup recria grafo, protocolo e HTTP no endereco anterior restaurando somente o backup privado.
-// Recebe: t *testing.T, e *empresaTeste, caminho string.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func reiniciarEmpresaComBackup(t *testing.T, e *empresaTeste, caminho string) {
 	t.Helper()
 	endereco := e.http.Listener.Addr().String()

@@ -1,15 +1,5 @@
-// Arquivo: internal/servidor/rest_consorcio.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Recebe e envia mensagens REST de saúde, preparação, consenso e finalização.
-// Autentica chamadas, limita mensagens e encaminha cada ação ao protocolo distribuído.
-// Salva alterações antes de responder com sucesso e aplica prazos nas chamadas aos pares.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package servidor
 
 import (
@@ -22,13 +12,10 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-
 	"vaijunto/internal/protocolo"
 )
 
 // Handler autentica e recebe as chamadas REST de coordenacao.
-// Recebe: nenhum parametro.
-// Retorna: um http.Handler que recebe as requisicoes; a escuta e iniciada pelo executavel do servidor.
 func (d *Distribuido) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !hmac.Equal([]byte(r.Header.Get("Authorization")), []byte("Bearer "+d.token)) {
@@ -65,8 +52,6 @@ func (d *Distribuido) Handler() http.Handler {
 }
 
 // executar salva as alteracoes locais antes de devolver um recibo ou voto positivo.
-// Recebe: acao string, b []byte.
-// Retorna: (any, error). Em falha, devolve error; em sucesso, erro nil.
 func (d *Distribuido) executar(acao string, b []byte) (any, error) {
 	resultado, err := d.executarLocal(acao, b)
 	if acao != "saude" {
@@ -92,8 +77,6 @@ func (d *Distribuido) executar(acao string, b []byte) (any, error) {
 }
 
 // executarLocal despacha uma chamada de coordenacao para saude, preparacao, consenso ou finalizacao.
-// Recebe: acao string, b []byte.
-// Retorna: (any, error). Em falha, devolve error; em sucesso, erro nil.
 func (d *Distribuido) executarLocal(acao string, b []byte) (any, error) {
 	switch acao {
 	case "saude":
@@ -121,8 +104,6 @@ func (d *Distribuido) executarLocal(acao string, b []byte) (any, error) {
 }
 
 // chamar usa a mesma operacao local ou a API REST do par, com prazo de rede.
-// Recebe: ctx context.Context, id, acao string, p, alvo any.
-// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func (d *Distribuido) chamar(ctx context.Context, id, acao string, p, alvo any) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -175,8 +156,6 @@ func (d *Distribuido) chamar(ctx context.Context, id, acao string, p, alvo any) 
 }
 
 // geracoes identifica as testemunhas disponiveis sem depender de relogios fisicos.
-// Recebe: ctx context.Context.
-// Retorna: um mapa de identidades para geracoes das testemunhas que responderam com identidade correta.
 func (d *Distribuido) geracoes(ctx context.Context) map[string]string {
 	var mu sync.Mutex
 	var wg sync.WaitGroup

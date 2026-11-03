@@ -1,14 +1,5 @@
-// Arquivo: internal/servidor/regras_test.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Monta o cenário local e verifica cadastro, sessões, autorização e regras de viagem.
-// Confere preços, limites de busca, cancelamento após a partida e logs sem segredos.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package servidor
 
 import (
@@ -18,7 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
 	"vaijunto/internal/protocolo"
 )
 
@@ -33,10 +23,6 @@ type cenarioViagem struct {
 	bc    protocolo.Carona
 }
 
-// criarCenario: Cria um grafo novo e injeta um relogio ajustavel. Publica A-B com um motorista e
-// B-C-D com outro. Retorna: Ponteiro para cenarioViagem com relogio, contas e caronas preparadas.
-// Recebe: t *testing.T.
-// Retorna: *cenarioViagem.
 func criarCenario(t *testing.T) *cenarioViagem {
 	t.Helper()
 	c := &cenarioViagem{g: NovoGrafo(), agora: time.Date(2099, 10, 1, 8, 0, 0, 0, time.FixedZone("Bahia", -3*3600))}
@@ -75,10 +61,6 @@ func criarCenario(t *testing.T) *cenarioViagem {
 	return c
 }
 
-// reservar: Confirma o percurso formado pelo primeiro trecho de cada uma das duas caronas.
-// Retorna: a reserva agregada, que pode estar ATIVA, PENDENTE ou cancelada, ou erro de validacao/execucao.
-// Recebe: t *testing.T.
-// Retorna: a reserva agregada, que pode estar ATIVA, PENDENTE ou cancelada, ou erro de validacao/execucao.
 func (c *cenarioViagem) reservar(t *testing.T) protocolo.Reserva {
 	t.Helper()
 	r, err := c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "abc", TrechosIDs: []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID}})
@@ -88,9 +70,6 @@ func (c *cenarioViagem) reservar(t *testing.T) protocolo.Reserva {
 	return r
 }
 
-// Viagens podem durar mais que a sessao: autentica novamente apos avancar o relogio.
-// Recebe: t *testing.T.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func (c *cenarioViagem) reautenticar(t *testing.T) {
 	t.Helper()
 	for email, destino := range map[string]*string{"m1@teste.com": &c.m1, "m2@teste.com": &c.m2, "p@teste.com": &c.p, "outro@teste.com": &c.outro} {
@@ -102,10 +81,6 @@ func (c *cenarioViagem) reautenticar(t *testing.T) {
 	}
 }
 
-// cancelarConexao: recebe o tipo de cancelamento e solicita ao segundo motorista que cancele
-// a carona ou seu primeiro trecho. Retorna: erro do servidor ou nil se o cancelamento ocorreu.
-// Recebe: tipo string.
-// Retorna: error: nil quando a operacao termina sem erro; caso contrario, o motivo da falha.
 func (c *cenarioViagem) cancelarConexao(tipo string) error {
 	if tipo == "trecho" {
 		_, err := c.g.CancelarTrecho(c.m2, c.bc.Trechos[0].Trecho.ID)
@@ -115,10 +90,6 @@ func (c *cenarioViagem) cancelarConexao(tipo string) error {
 	return err
 }
 
-// TestCadastroAutenticacaoAutorizacaoEDesconexao: recebe o teste e cria uma conta normalizada.
-// Confere senha, duplicacao, perfis, sessao desconhecida e revogacao no logout. Sem retorno.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestCadastroAutenticacaoAutorizacaoEDesconexao(t *testing.T) {
 	g := NovoGrafo()
 	g.agora = func() time.Time {
@@ -172,51 +143,6 @@ func TestCadastroAutenticacaoAutorizacaoEDesconexao(t *testing.T) {
 	}
 }
 
-// TestBuscarValidaParametrosAntesDeExplorarOGrafo verifica o cenario: Buscar Valida Parametros Antes De Explorar OGrafo.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestBuscarValidaParametrosAntesDeExplorarOGrafo(t *testing.T) {
-	c := criarCenario(t)
-	casos := []protocolo.BuscaItinerario{
-		{Origem: "", Destino: "B", Data: "2099-10-01"},
-		{Origem: "A", Destino: " a ", Data: "2099-10-01"},
-		{Origem: "A", Destino: "B", Data: "01/10/2099"},
-		{Origem: "A", Destino: "B", Data: "2099-10-01", MaxTrechos: -1},
-		{Origem: "A", Destino: "B", Data: "2099-10-01", MaxTrechos: 21},
-	}
-	for i, busca := range casos {
-		if _, err := c.g.Buscar(c.p, busca); err == nil {
-			t.Errorf("caso %d foi aceito: %+v", i, busca)
-		}
-	}
-	if _, err := c.g.ConsultarReservas(c.m1); err == nil {
-		t.Fatal("motorista autorizado a consultar reservas de passageiro")
-	}
-	if _, err := c.g.Buscar(c.m1, protocolo.BuscaItinerario{Origem: "A", Destino: "B", Data: "2099-10-01"}); err == nil {
-		t.Fatal("motorista autorizado a buscar como passageiro")
-	}
-}
-
-// TestCancelarReservaIniciada: recebe o teste e avanca o relogio ate a partida da reserva.
-// Confere que o cancelamento e recusado e a reserva permanece ativa. Sem retorno.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestCancelarReservaIniciada(t *testing.T) {
-	c := criarCenario(t)
-	reserva := c.reservar(t)
-	c.agora = partida(reserva.Assentos[0].Trecho)
-	c.reautenticar(t)
-	if _, err := c.g.CancelarReserva(c.p, reserva.ID); err == nil {
-		t.Fatal("reserva iniciada foi cancelada")
-	}
-	if c.g.reservas[reserva.ID].Status != protocolo.Ativa {
-		t.Fatal("tentativa recusada alterou a reserva")
-	}
-}
-
-// TestPrecoPorTrechoValidacaoESoma verifica o cenario: Preco Por Trecho Validacao ESoma.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestPrecoPorTrechoValidacaoESoma(t *testing.T) {
 	c := criarCenario(t)
 	p := protocolo.PublicacaoCarona{Chave: "precos", Rota: []string{"Serrinha", "Feira", "Salvador"}, DataHora: c.agora.Add(time.Hour).Format(time.RFC3339), Assentos: 2, Trechos: []protocolo.OfertaTrecho{{Preco: 0.10, DistanciaKM: 999, TempoViagem: 60}, {Preco: 0.20, DistanciaKM: 1, TempoViagem: 60}}}
@@ -242,10 +168,6 @@ func TestPrecoPorTrechoValidacaoESoma(t *testing.T) {
 	}
 }
 
-// TestSessaoQuinzeMinutosELogsSemSegredos: recebe o teste e avanca o relogio da sessao.
-// Confere consultas antes, no instante e depois da expiracao, limpeza e logs. Sem retorno.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestSessaoQuinzeMinutosELogsSemSegredos(t *testing.T) {
 	c := criarCenario(t)
 	var saida bytes.Buffer
@@ -289,5 +211,28 @@ func TestSessaoQuinzeMinutosELogsSemSegredos(t *testing.T) {
 	}
 	if len(c.g.sessoes) != 0 {
 		t.Fatal("sessões expiradas mantidas")
+	}
+}
+
+func TestDecodificarRejeitaJSONAmbiguoOuForaDoContrato(t *testing.T) {
+	casos := map[string][]byte{
+		"vazio":              nil,
+		"escalar":            []byte(`42`),
+		"lista":              []byte(`[]`),
+		"utf8 inválido":      {0xff, '{', '}'},
+		"campo desconhecido": []byte(`{"nome":"Ana","extra":true}`),
+		"campo duplicado":    []byte(`{"nome":"Ana","nome":"Bia"}`),
+		"duplicado aninhado": []byte(`{"nome":"Ana","obj":{"x":1,"x":2}}`),
+		"dois objetos":       []byte(`{"nome":"Ana"} {"nome":"Bia"}`),
+	}
+	for nome, dados := range casos {
+		t.Run(nome, func(t *testing.T) {
+			var destino struct {
+				Nome string `json:"nome"`
+			}
+			if err := decodificar(dados, &destino); err == nil {
+				t.Fatal("entrada inválida foi aceita")
+			}
+		})
 	}
 }

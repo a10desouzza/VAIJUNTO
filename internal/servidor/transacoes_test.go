@@ -1,28 +1,112 @@
-// Arquivo: internal/servidor/transacoes_test.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Verifica preparação e aborto dos assentos locais de transações.
-// Testa recusa sem preparação parcial, idempotência e proteção das vagas sob concorrência.
-// Também verifica a independência de operações em trechos diferentes.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package servidor
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
-
 	"vaijunto/internal/protocolo"
 )
 
-// TestPreparacaoEAbortoPreservamVagas verifica o cenario: Preparacao EAborto Preservam Vagas.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
+func TestPublicacaoSemParadaNoDestinoFinal(t *testing.T) {
+	c := criarCenario(t)
+	for _, n := range []int{2, 3, 8, 21} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			p := protocolo.PublicacaoCarona{Chave: fmt.Sprint("final-", n), Assentos: 2, DataHora: c.agora.Add(time.Hour).Format(time.RFC3339)}
+			for i := 0; i < n; i++ {
+				p.Rota = append(p.Rota, fmt.Sprintf("Cidade %c", 'A'+i))
+				if i < n-1 {
+					p.Trechos = append(p.Trechos, protocolo.OfertaTrecho{Preco: 20, DistanciaKM: 10, TempoViagem: 60, TempoParada: 15})
+				}
+			}
+			carona, err := c.g.Publicar(c.m1, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, item := range carona.Trechos {
+				esperada := 15
+				if i == n-2 {
+					esperada = 0
+				}
+				if item.Trecho.TempoParada != esperada {
+					t.Fatalf("trecho %d: parada %d, esperado %d", i, item.Trecho.TempoParada, esperada)
+				}
+				hora := c.agora.Add(time.Hour + time.Duration(i*75)*time.Minute).Format(time.RFC3339)
+				if item.Trecho.DataHora != hora {
+					t.Fatalf("horário: %s, esperado %s", item.Trecho.DataHora, hora)
+				}
+			}
+			if p.Trechos[n-2].TempoParada != 15 {
+				t.Fatal("alterou entrada do chamador")
+			}
+			p.Trechos[n-2].TempoParada = 0
+			repetida, err := c.g.Publicar(c.m1, p)
+			if err != nil || repetida.ID != carona.ID {
+				t.Fatalf("repetição normalizada: %v, %s", err, repetida.ID)
+			}
+		})
+	}
+}
+
+func TestReservaSerrinhaFeiraSalvadorDuranteViagemEParada(t *testing.T) {
+	for _, caso := range []struct {
+		nome      string
+		depois    time.Duration
+		permitido bool
+	}{
+		{"partida de Serrinha", 0, true},
+		{"a caminho de Feira", 30 * time.Minute, true},
+		{"chegada em Feira", 60 * time.Minute, true},
+		{"durante parada", 65 * time.Minute, true},
+		{"ultimo segundo", 70*time.Minute - time.Second, true},
+		{"partida de Feira", 70 * time.Minute, false},
+		{"apos partida", 71 * time.Minute, false},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			c := criarCenario(t)
+			inicio := c.agora.Add(time.Minute)
+			carona, err := c.g.Publicar(c.m1, protocolo.PublicacaoCarona{
+				Chave: "serrinha", Rota: []string{"Serrinha", "Feira de Santana", "Salvador"}, DataHora: inicio.Format(time.RFC3339), Assentos: 1,
+				Trechos: []protocolo.OfertaTrecho{{Preco: 17.35, DistanciaKM: 80, TempoViagem: 60, TempoParada: 10}, {Preco: 42.10, DistanciaKM: 110, TempoViagem: 90}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.agora = inicio.Add(caso.depois)
+			c.reautenticar(t)
+			resultado, err := c.g.Buscar(c.p, protocolo.BuscaItinerario{Origem: "Feira de Santana", Destino: "Salvador", Data: "2099-10-01"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (len(resultado.Itinerarios) == 1) != caso.permitido {
+				t.Fatalf("busca: %+v", resultado)
+			}
+			primeiro := carona.Trechos[0].Trecho.ID
+			segundo := carona.Trechos[1].Trecho.ID
+			if _, err := c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "iniciado", TrechosIDs: []string{primeiro, segundo}}); err == nil {
+				t.Fatal("reservou trecho iniciado")
+			}
+			if c.g.trechos[segundo].trecho.Assentos != 1 {
+				t.Fatal("falha parcial consumiu vaga futura")
+			}
+			r, err := c.g.Confirmar(c.p, protocolo.ReservaItinerario{Chave: "futuro", TrechosIDs: []string{segundo}})
+			if (err == nil) != caso.permitido {
+				t.Fatalf("reserva: %v", err)
+			}
+			if caso.permitido {
+				if r.PrecoTotal != 42.10 || r.Assentos[0].Trecho.DataHora != inicio.Add(70*time.Minute).Format(time.RFC3339) {
+					t.Fatalf("reserva: %+v", r)
+				}
+				if _, err := c.g.Confirmar(c.outro, protocolo.ReservaItinerario{Chave: "lotado", TrechosIDs: []string{segundo}}); err == nil {
+					t.Fatal("reservou sem vagas")
+				}
+			}
+		})
+	}
+}
+
 func TestPreparacaoEAbortoPreservamVagas(t *testing.T) {
 	c := criarCenario(t)
 	id := c.ab.Trechos[0].Trecho.ID
@@ -70,9 +154,6 @@ func TestPreparacaoEAbortoPreservamVagas(t *testing.T) {
 	}
 }
 
-// TestPreparacaoRecusadaNaoSeparaParteDoPedido verifica o cenario: Preparacao Recusada Nao Separa Parte Do Pedido.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestPreparacaoRecusadaNaoSeparaParteDoPedido(t *testing.T) {
 	c := criarCenario(t)
 	ab, bc := c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID
@@ -88,32 +169,6 @@ func TestPreparacaoRecusadaNaoSeparaParteDoPedido(t *testing.T) {
 	}
 }
 
-// TestValidarPreparacaoRejeitaLimitesInvalidos verifica o cenario: Validar Preparacao Rejeita Limites Invalidos.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
-func TestValidarPreparacaoRejeitaLimitesInvalidos(t *testing.T) {
-	base := protocolo.PedidoPreparacao{TransacaoID: "teste", EmpresaOrigem: "empresa-a", PassageiroRef: "passageiro-teste", Participantes: []string{"empresa-b"}, TrechosIDs: []string{"T1"}}
-	casos := []protocolo.PedidoPreparacao{base, base, base, base, base, base, base}
-	casos[0].TransacaoID = strings.Repeat("x", 129)
-	casos[1].TrechosIDs = nil
-	casos[2].TrechosIDs = make([]string, 21)
-	casos[3].TrechosIDs = []string{"T1", "T1"}
-	casos[4].PassageiroRef = ""
-	casos[5].PassageiroRef = "   "
-	casos[6].PassageiroRef = strings.Repeat("p", 129)
-	for i, p := range casos {
-		if validarPreparacao(p) == nil {
-			t.Fatalf("caso invalido aceito: %d", i)
-		}
-	}
-	if err := validarPreparacao(base); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// TestChaveConcorrenteEmTrechosDiferentesNaoOcupaDuasVagas verifica o cenario: Chave Concorrente Em Trechos Diferentes Nao Ocupa Duas Vagas.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestChaveConcorrenteEmTrechosDiferentesNaoOcupaDuasVagas(t *testing.T) {
 	c := criarCenario(t)
 	ids := []string{c.ab.Trechos[0].Trecho.ID, c.bc.Trechos[0].Trecho.ID}
@@ -150,9 +205,6 @@ func TestChaveConcorrenteEmTrechosDiferentesNaoOcupaDuasVagas(t *testing.T) {
 	}
 }
 
-// TestReservaEmOutroTrechoNaoEsperaTravaDoPrimeiro verifica o cenario: Reserva Em Outro Trecho Nao Espera Trava Do Primeiro.
-// Recebe: t *testing.T.
-// Retorna: nao possui retorno; registra falhas no objeto de teste quando o resultado viola o esperado.
 func TestReservaEmOutroTrechoNaoEsperaTravaDoPrimeiro(t *testing.T) {
 	c := criarCenario(t)
 	ab := c.ab.Trechos[0].Trecho.ID

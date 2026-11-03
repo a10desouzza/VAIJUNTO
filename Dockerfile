@@ -4,7 +4,8 @@ COPY go.mod ./
 COPY cmd ./cmd
 COPY internal ./internal
 COPY testes ./testes
-RUN CGO_ENABLED=1 go test -race -v ./...
+# Executa todos os testes com race; um pacote por vez reduz a disputa nas VMs.
+RUN CGO_ENABLED=1 go test -race -p 1 -timeout 20m -v ./...
 RUN go vet ./...
 
 FROM testes AS compilacao

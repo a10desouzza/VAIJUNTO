@@ -1,15 +1,5 @@
-// Arquivo: cmd/servidor/main.go
-// Projeto: Consórcios - Problema 2
-// Autor: Arthur de Andrade Souza
-// Disciplina: TEC502 - TP01 - Concorrência e Conectividade - 2026.2
-// Professor: Antonio A T R Coutinho
-// Declaração de não plágio: declaro que não apresento trabalho de terceiros
-// como próprio e que as fontes utilizadas devem ser devidamente reconhecidas.
-//
-// Inicia uma empresa do projeto Consórcios com identidade e endereços próprios.
-// Carrega o backup antes de abrir as portas TCP e REST e inicia a recuperação.
-// Também coordena o encerramento das escutas quando o processo é interrompido.
-
+// TEC502 - Problema 2. Autor: Arthur de Andrade Souza.
+// Fontes utilizadas devem ser reconhecidas; nao apresentar trabalho de terceiros como proprio.
 package main
 
 import (
@@ -23,7 +13,6 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
-
 	"vaijunto/internal/configuracao"
 	"vaijunto/internal/consorcio"
 	"vaijunto/internal/servidor"
@@ -31,8 +20,6 @@ import (
 
 // main inicia o estado local da empresa e, opcionalmente, sua API REST.
 // Ctrl+C encerra os dois transportes.
-// Recebe: nenhum parametro.
-// Retorna: nenhum valor; executa os efeitos descritos acima.
 func main() {
 	padrao := os.Getenv("VAIJUNTO_ENDERECO")
 	if padrao == "" {
@@ -120,8 +107,6 @@ func main() {
 }
 
 // ambiente consulta a variavel de ambiente recebida e usa o valor padrao se ela estiver vazia.
-// Recebe: nome, padrao string.
-// Retorna: string.
 func ambiente(nome, padrao string) string {
 	if valor := os.Getenv(nome); valor != "" {
 		return valor

@@ -235,7 +235,7 @@ Também é possível configurar os endereços por `VAIJUNTO_SERVIDOR_VAIJUNTO`, 
 
 O endereço precisa ser o IP do computador servidor. Dentro de um contêiner de cliente, `localhost` apontaria para o próprio contêiner de cliente.
 
-No menu, crie uma conta ou autentique-se. O cadastro inicia a sessão automaticamente. A conta pertence somente à empresa em que foi criada. A senha deve ter de 8 a 128 caracteres; neste protótipo ela fica visível no terminal e é guardada em texto puro, inclusive no backup local. Use contas e senhas de demonstração.
+No menu, crie uma conta ou autentique-se. O cadastro inicia a sessão automaticamente. A conta pertence somente à empresa em que foi criada. A senha deve ter de 8 a 128 caracteres; ela fica visível no terminal, mas o servidor armazena somente PBKDF2-HMAC-SHA256 (600.000 iterações), salt aleatório de 16 bytes e hash de 32 bytes, também no backup local. Backups antigos com senhas em texto puro são migrados e regravados na inicialização. O TCP atual não cifra o tráfego; use contas e senhas de demonstração.
 
 A sessão dura 15 minutos. Fechar uma conexão TCP não encerra a sessão; sair pelo menu revoga a sessão.
 
@@ -869,19 +869,21 @@ A suíte cobre busca entre empresas, disputa pela última vaga a partir de três
 | `cmd/cliente_passageiro` | Entrada do cliente passageiro |
 | `cmd/carga` | Entrada do simulador local e distribuído |
 | `internal/configuracao/rede.go` | Endereços TCP, identidades e participantes REST |
-| `internal/cliente` | `menu.go`: configuração, acesso e navegação; `motorista.go` e `passageiro.go`: operações; `entrada.go`: formulários; `tcp.go`: transporte |
+| `internal/cliente` | `menu.go`: cadastro, navegação e avisos; `perfis.go`: operações dos perfis; `entrada.go`: formulários, configuração e transporte TCP |
 | `internal/protocolo` | Tipos das mensagens e validações |
 | `internal/consorcio/rest.go` | Catálogos REST e agrupamento dos trechos por empresa |
-| `internal/servidor/gerenciador.go` | Estado local e travas |
-| `internal/servidor/fila.go` | Filas de leitura e escrita com um trabalhador TCP |
+| `internal/servidor/gerenciador.go` | Estado local, autenticação com hash e travas |
+| `internal/servidor/tcp.go` | Filas de leitura e escrita com um trabalhador TCP |
 | `internal/servidor/backup.go` | Gravação e restauração do arquivo privado |
 | `internal/servidor/caronas.go` | Ofertas e exploração dos itinerários |
 | `internal/servidor/transacoes.go` | Preparação, confirmação e aborto locais |
 | `internal/servidor/distribuido.go` | Tipos de coordenação, aplicação e recuperação |
 | `internal/servidor/rest_consorcio.go` | Chamadas REST entre empresas |
 | `internal/servidor/consenso.go` | Promessas, cédulas e decisão por maioria |
-| `internal/servidor/itinerario_distribuido.go` | Integração da busca, reservas e cancelamentos entre empresas |
-| `internal/carga/carga.go` | Cenários de carga local e distribuída, métricas e verificação de integridade |
+| `internal/servidor/itinerario_distribuido.go` | Busca e confirmação de itinerários entre empresas |
+| `internal/servidor/participantes.go` | Validação das preparações e aplicação de decisões certificadas |
+| `internal/servidor/gestao_reservas.go` | Consulta, atualização e cancelamento das reservas distribuídas |
+| `internal/carga` | `carga.go`: cenário local e métricas; `consorcio.go`: cenário distribuído |
 | `testes` | Testes pela API pública: integração, menus, comunicação REST, configuração e validação |
 
 O TCP possui duas filas, com até 128 mensagens de leitura e 128 de escrita, e um trabalhador que alterna a preferência entre elas. Leitores de rede aguardam os sockets sem ocupar esse trabalhador. O limite de transporte é de 256 conexões simultâneas; fila cheia recebe resposta de erro. Há outras goroutines para rede, REST e recuperação: o programa não executa inteiro em uma única goroutine. O buffer TCP inicial é de 4 KiB, com limite de mensagem de 1 MiB.
@@ -908,7 +910,7 @@ A especificação das requisições, respostas, códigos HTTP e sequência das m
 - Sem backup, uma geração nova não volta a votar em transações da geração perdida.
 - Os backups são locais e não replicam as bases das empresas. Perder o arquivo ou o disco da empresa impede essa recuperação.
 
-Salvar uma fotografia completa a cada escrita simplifica a recuperação e acrescenta custo de disco. Um trabalhador TCP também serializa as operações; isso controla a concorrência, mas não garante maior vazão. O roteiro de apresentação explica as decisões e os limites em [docs/APRESENTACAO.md](docs/APRESENTACAO.md).
+Salvar uma fotografia completa a cada escrita simplifica a recuperação e acrescenta custo de disco. Um trabalhador TCP também serializa as operações; isso controla a concorrência, mas não garante maior vazão. A sequência da confirmação está em [internal/consorcio/API.md](internal/consorcio/API.md); a conferência do barema aparece abaixo.
 
 ## Problemas comuns
 
@@ -950,3 +952,29 @@ O mapeamento `-p PORTA_EXTERNA:PORTA_INTERNA` pertence ao comando do
 servidor Docker; ele nao faz parte do endereco passado ao cliente.
 Depois de atualizar o codigo, reconstrua a imagem com
 `docker build --target runtime -t vaijunto:local .` em cada computador.
+
+### Estrutura simplificada e conferência do barema
+
+São 34 arquivos Go, incluindo 9 arquivos de testes; cada arquivo tem menos de 300 linhas físicas. A suíte contém 50 funções de teste, além dos subtestes. A redução eliminou documentação mecânica e cenários sobrepostos, preservando os testes distribuídos de disputa, falhas e recuperação. Não houve troca do protocolo de coordenação por biblioteca ou serviço externo.
+
+| Item do barema | Implementação e demonstração |
+|---|---|
+| 1. Arquitetura | Uma instância por empresa; contas e vagas locais em `gerenciador.go`; montagem em `cmd/servidor/main.go`. O servidor central do Problema 1 foi substituído por empresas independentes. |
+| 2. REST | `consorcio/rest.go` e `rest_consorcio.go`; métodos, JSON, códigos e repetição em `internal/consorcio/API.md`. Clientes continuam usando sockets TCP nativos e NDJSON. |
+| 3. Busca distribuída | Consulta paralela em tempo real aos catálogos; retorna empresas indisponíveis, sem copiar suas bases para armazenamento local. |
+| 4. Exclusão mútua | Cada dono protege seus trechos com mutexes e distingue vagas preparadas de ocupadas; disputa por três origens em `distribuido_test.go`. |
+| 5. Atomicidade | Preparações nos donos, decisão por maioria e certificado; só apresenta reserva ativa após aplicação em todos os donos. Diagrama de sequência em `internal/consorcio/API.md`. |
+| 6. Precedência | Ordem de admissão no dono da vaga, sob trava, registrada por contador local. Não depende de relógios físicos sincronizados; não garante prioridade por horário global de envio. |
+| 7. Deadlock | Travas locais e participantes em ordem consistente; preparação conflitante é recusada sem esperar outra vaga. Reduz espera circular, mas pode exigir nova tentativa. |
+| 8. Falhas | Timeouts não encerram os pares nem liberam vagas sozinhos. Reservas locais continuam; decisões distribuídas precisam de maioria e dos donos disponíveis para concluir a aplicação. |
+| 9. Recuperação | `backup.go`: arquivo privado, checksum, sincronização e substituição por temporário; preserva preparações, promessas, decisões e geração. Testes recriam servidores após preparação, escolha e confirmação. |
+| 10. Testes | `regras_test.go`, `transacoes_test.go`, `tcp_test.go`, `distribuido_test.go`, `falhas_distribuidas_test.go`, `backup_test.go`, `seguranca_test.go` e `testes/{sistema,interfaces}_test.go`. |
+| 11. Emulação | Dockerfile executa testes com detector de corridas e `go vet`; roteiro principal usa computadores distintos e um volume privado por empresa. A topologia real precisa ser validada no laboratório. |
+
+O requisito de servidor único central do Problema 1 foi substituído pela solução distribuída do Problema 2. Permanecem TCP nativo entre clientes e sua empresa, JSON validado, ausência de banco de dados e coordenação implementada pelo projeto. REST usa HTTP sobre TCP; a rede ainda precisa permitir a porta publicada, conforme as regras do laboratório.
+
+Para verificar no ambiente Docker, execute `docker build -t vaijunto:local .`. O cenário Compose com três serviços na mesma máquina é auxiliar e não substitui a emulação em computadores distintos. Os comandos para executar clientes em contêineres separados estão nas seções anteriores.
+
+A derivação de senha usa a biblioteca padrão de criptografia, sem delegar nenhum mecanismo de coordenação distribuída. O custo PBKDF2-SHA256 segue a referência [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
+
+Validação desta simplificação: `go test ./...`, `go vet ./...` e `go build ./...` passaram. São 50 funções de teste (subtestes não entram nessa contagem); o pacote interno do servidor concluiu em 141,825 s, e os testes públicos passaram usando o cache válido do Go. O hash de senha acrescenta custo de CPU ao cadastro e login. O detector de corridas não foi executado neste Windows porque CGO está desativado e não há compilador C disponível. Docker não está disponível nesta máquina; o build e a topologia em computadores distintos continuam pendentes de execução no laboratório. Esses resultados não equivalem a uma medição de desempenho da rede do laboratório.
